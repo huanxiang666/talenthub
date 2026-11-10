@@ -41,6 +41,32 @@ jobs:
           curl -sf http://127.0.0.1:8399/api/health
           kill %1
 
+      - name: Smoke test (Windows exe 真实运行 + 冻结包内 OCR)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Start-Process -FilePath "dist\TalentHub.exe" -ArgumentList "--no-open","--port","8399"
+          $ok = $false
+          foreach ($i in 1..40) {
+            Start-Sleep -Seconds 3
+            try {
+              $h = Invoke-RestMethod -Uri "http://127.0.0.1:8399/api/health" -TimeoutSec 5
+              if ($h.ok) { $ok = $true; break }
+            } catch { }
+          }
+          if (-not $ok) { Get-Process TalentHub -ErrorAction SilentlyContinue | Stop-Process -Force; throw "exe 启动失败：120 秒内 /api/health 无响应" }
+          Write-Host "PASS: exe 启动成功 (health ok)"
+          # 冻结包内 OCR 实测：导入扫描版样本，断言解析出姓名
+          Copy-Item "samples\李娜-质量经理-扫描版.pdf" "$env:TEMP\li-scan.pdf"
+          $resp = Invoke-RestMethod -Uri "http://127.0.0.1:8399/api/import/resumes" -Method Post -Form @{ files = Get-Item "$env:TEMP\li-scan.pdf" } -TimeoutSec 300
+          if ($resp.parsed -ne 1) { Get-Process TalentHub -ErrorAction SilentlyContinue | Stop-Process -Force; throw "OCR 导入失败: $($resp.results | ConvertTo-Json -Depth 5)" }
+          $draft = $resp.results[0].draft
+          Write-Host "PASS: 冻结包内 OCR 解析 → 姓名=$($draft.name) 电话=$($draft.phone) 方式=$($resp.results[0].method)"
+          if ($draft.name -ne "李娜" -or $draft.phone -ne "13957654321") { Get-Process TalentHub -ErrorAction SilentlyContinue | Stop-Process -Force; throw "OCR 解析字段不符: name=$($draft.name) phone=$($draft.phone)" }
+          Get-Process TalentHub -ErrorAction SilentlyContinue | Stop-Process -Force
+          Write-Host "Windows smoke: ALL PASS"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

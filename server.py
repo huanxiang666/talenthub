@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import socket
 import sys
 import threading
@@ -64,8 +65,11 @@ def main():
             time.sleep(0.3)
 
     if _port_busy(host, port):
-        print(f"[错误] 端口 {port} 已被占用。换个端口启动: python server.py --port {port + 1}"
+        print(f"[错误] 端口 {port} 已被占用或不可用。换个端口启动: python server.py --port {port + 1}"
               f"\n       或修改 config.json 里的 port 字段。")
+        if os.name == "nt":
+            print("       Windows 提示：该端口也可能落在系统保留段（Hyper-V/WSL 动态保留），"
+                  "可用命令查看: netsh int ipv4 show excludedportrange protocol=tcp")
         sys.exit(2)
 
     auto_open = cfg.get("auto_open_browser", True) and not args.no_open
@@ -73,9 +77,10 @@ def main():
     lan = _lan_ip()
 
     bar = "─" * 56
+    from app import __version__
     print(f"""
 ┌{bar}┐
-│  TalentHub 企业人才库  v1.0                                │
+│  TalentHub 企业人才库  v{__version__}                          │
 │  本机访问:  {url_local:<43}│
 │  局域网:    {('http://' + lan + ':' + str(port)) if host == '0.0.0.0' else '（未开放端口，设置中改 host=0.0.0.0）':<43}│
 │  数据目录:  {str(config.DATA_DIR)[:43]:<43}│
