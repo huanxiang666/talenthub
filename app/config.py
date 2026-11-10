@@ -27,12 +27,15 @@ DB_PATH = DATA_DIR / "talent.db"
 STATIC_DIR = BUNDLE_DIR / "app" / "static"
 
 DEFAULTS = {
-    "host": "127.0.0.1",          # 改 0.0.0.0 即"开放端口"，局域网可访问
+    "host": "0.0.0.0",          # 默认开放 0.0.0.0，局域网与本机均可访问
     "port": 8300,
     "auto_open_browser": True,     # 本地运行时自动弹出仪表页面
     "ocr_enabled": True,           # 扫描版文档是否走内置 OCR
     "ocr_max_pages": 30,           # 单份文档最多 OCR 页数（防超大扫描件卡死）
     "upload_keep_original": True,  # 保留上传原件，可回看下载
+    "llm_enabled": True,           # 本地 mini 大模型智能解析（Qwen2.5 GGUF，离线）
+    "llm_model_path": "",          # 留空自动发现 data/models/*.gguf；也可指定绝对路径
+    "llm_min_confidence": 0.75,    # 规则解析置信度低于该值才动用 LLM（批量导入提速）
     "app_name": "TalentHub 企业人才库",
 }
 

@@ -17,14 +17,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, UploadFile, File
+from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__, config, db
-from .extract import loader, ocr_engine, parser
+from .extract import llm_parser, loader, ocr_engine, parser
 from .services import excel as excel_svc
+from .services import model_hub
 from .services import talent as talent_svc
 
 
@@ -121,6 +122,7 @@ def system_info(request: Request):
         "db_path": str(config.DB_PATH), "db_size_kb": round(db_size / 1024, 1),
         "upload_dir": str(config.UPLOAD_DIR),
         "ocr": ocr_engine.status(),
+        "llm": llm_parser.status(),
     }
 
 
@@ -131,6 +133,9 @@ class SettingsIn(BaseModel):
     ocr_enabled: Optional[bool] = None
     ocr_max_pages: Optional[int] = None
     upload_keep_original: Optional[bool] = None
+    llm_enabled: Optional[bool] = None
+    llm_model_path: Optional[str] = None
+    llm_min_confidence: Optional[float] = None
 
 
 @app.get("/api/settings")
@@ -145,7 +150,43 @@ def put_settings(body: SettingsIn):
         _err("host 只能是 127.0.0.1（仅本机）或 0.0.0.0（开放端口）")
     if "port" in patch and not (1024 <= int(patch["port"]) <= 65535):
         _err("端口需在 1024-65535 之间")
+    if "llm_min_confidence" in patch and not (0 <= float(patch["llm_min_confidence"]) <= 1):
+        _err("llm_min_confidence 需在 0~1 之间")
+    if "llm_model_path" in patch and patch["llm_model_path"] and not Path(patch["llm_model_path"]).exists():
+        _err(f"模型路径不存在: {patch['llm_model_path']}")
     return config.save(patch)
+
+
+# ---------- 本地 AI 模型（下载/状态） ----------
+
+class DownloadIn(BaseModel):
+    model_id: str
+    source: str
+
+
+@app.get("/api/llm/status")
+def llm_status():
+    return llm_parser.status()
+
+
+@app.get("/api/llm/models")
+def llm_models():
+    return {"models": model_hub.catalog(),
+            "models_dir": str(config.DATA_DIR / "models"),
+            "download": model_hub.progress()}
+
+
+@app.post("/api/llm/download")
+def llm_download(body: DownloadIn):
+    try:
+        return model_hub.start_download(body.model_id, body.source)
+    except ValueError as e:
+        _err(str(e))
+
+
+@app.get("/api/llm/download")
+def llm_download_progress():
+    return model_hub.progress()
 
 
 @app.post("/api/settings/restart")
@@ -311,15 +352,24 @@ def get_original_file(tid: int):
 # ---------- 简历导入（PDF/Word/图片 → 解析草稿 → 批量入库） ----------
 
 @app.post("/api/import/resumes")
-async def import_resumes(files: list[UploadFile] = File(...)):
-    """上传简历文件 → 提取文本（必要时 OCR）→ 解析字段 → 返回草稿（不直接入库，
-    由前端确认后调 /api/talents/bulk，实现"人工确认"的精准管理）。"""
+def import_resumes(files: list[UploadFile] = File(...), force_llm: str = Form("0")):
+    """上传简历文件 → 提取文本（必要时 OCR）→ 规则解析 → （低置信度时）本地 LLM 增强
+    → 返回草稿（不直接入库，由前端确认后调 /api/talents/bulk，实现"人工确认"）。
+
+    同步 def：整条管线（OCR/LLM）都是 CPU 阻塞操作，交给 FastAPI 线程池执行，
+    避免卡死事件循环导致其它请求（健康检查/页面）无响应。
+    force_llm=1 时对全部文件强制走 LLM（默认只对规则置信度 < llm_min_confidence 的启用，
+    批量导入时避免每份都跑几十秒推理）。"""
     if not files:
         _err("未收到文件")
     if len(files) > MAX_FILES_PER_UPLOAD:
         _err(f"单次最多上传 {MAX_FILES_PER_UPLOAD} 个文件，请分批导入")
     results = []
     cfg = config.get()
+    llm_ok = bool(cfg.get("llm_enabled")) and llm_parser.status()["enabled"]
+    llm_min = float(cfg.get("llm_min_confidence", 0.75))
+    want_llm_all = force_llm == "1"
+    llm_errors: list[str] = []
     for up in files:
         fname = _safe_name(up.filename or "")
         ext = Path(fname).suffix.lower()
@@ -347,6 +397,13 @@ async def import_resumes(files: list[UploadFile] = File(...)):
                 results.append(item)
                 continue
             parsed = parser.parse_resume(res.text, fname)
+            llm_used = False
+            if llm_ok and (want_llm_all or parsed.get("parse_confidence", 0) < llm_min):
+                try:
+                    parsed, llm_used = llm_parser.enhance(res.text, parsed)
+                except Exception as e:  # LLM 失败不阻断：回退纯规则结果，记警告
+                    llm_errors.append(f"{fname}: {type(e).__name__}: {e}")
+                    res.warnings.append("AI 增强解析失败，已回退规则解析结果")
             parsed["source_file"] = fname
             parsed["stored_path"] = stored if cfg.get("upload_keep_original") else ""
             if not cfg.get("upload_keep_original"):
@@ -355,7 +412,7 @@ async def import_resumes(files: list[UploadFile] = File(...)):
             parsed["source"] = "简历导入"
             item.update({
                 "ok": True, "draft": parsed, "method": res.method,
-                "ocr_used": res.ocr_used, "pages": res.pages,
+                "ocr_used": res.ocr_used, "llm_used": llm_used, "pages": res.pages,
                 "warnings": res.warnings, "text_length": len(res.text),
             })
         except Exception as e:
@@ -363,9 +420,11 @@ async def import_resumes(files: list[UploadFile] = File(...)):
             _remove_orphan(stored)
         results.append(item)
     ok_n = sum(1 for r in results if r["ok"])
-    db.log_event("import_resumes", f"{len(files)} 个文件，成功解析 {ok_n} 个")
+    llm_n = sum(1 for r in results if r.get("llm_used"))
+    db.log_event("import_resumes", f"{len(files)} 个文件，成功解析 {ok_n} 个，AI增强 {llm_n} 个")
     return {"total": len(results), "parsed": ok_n, "results": results,
-            "ocr_status": ocr_engine.status()}
+            "ocr_status": ocr_engine.status(), "llm_status": llm_parser.status(),
+            "llm_used_count": llm_n, "llm_errors": llm_errors[:5]}
 
 
 class BulkIn(BaseModel):

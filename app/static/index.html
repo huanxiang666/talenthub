@@ -112,6 +112,9 @@
               </select>
             </div>
             <div class="toolbar-actions">
+              <button id="btn-batch-upload" class="btn btn-primary" title="支持多选 PDF/Word/图片 批量上传解析">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                批量上传简历</button>
               <button id="btn-add-talent" class="btn btn-ghost">＋ 手动新增</button>
               <button id="btn-export-filtered" class="btn btn-ghost">导出 Excel</button>
             </div>
@@ -158,9 +161,20 @@
         <div id="tab-resume" class="tab-panel">
           <div class="card">
             <div id="dropzone-resume" class="dropzone">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
-              <p><b>拖拽简历文件到这里</b>，或 <label class="link like-btn">点击选择<input id="file-resume" type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.png,.jpg,.jpeg,.bmp,.webp" hidden></label></p>
-              <p class="sub">支持 PDF（扫描版自动走内置 OCR）、Word .docx、图片、txt，单次可多选</p>
+              <div class="dropzone-icon-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
+              </div>
+              <p class="dropzone-title"><b>拖拽简历文件到这里，支持数十份同时批量解析</b></p>
+              <div class="dropzone-btns">
+                <label class="btn btn-primary like-btn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  选择多个文件（按住 Ctrl/Shift 多选）
+                  <input id="file-resume" type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.png,.jpg,.jpeg,.bmp,.webp" hidden>
+                </label>
+              </div>
+              <p class="sub">格式支持：PDF（扫描版自动精准 OCR）、Word (.docx)、简历图片（JPG/PNG）、TXT；单次最大支持 50 份并发解析</p>
+              <label class="check-line" style="justify-content:center;margin-top:12px;font-size:13px">
+                <input type="checkbox" id="force-llm"> 强制 AI 增强解析（每份都过本地大模型，较慢但非标准简历识别率最高；需先在「系统设置」下载模型）</label>
             </div>
             <div id="resume-progress" class="progress-line" hidden><div class="bar"><i></i></div><span></span></div>
           </div>
@@ -305,6 +319,35 @@
             <div id="sys-urls" class="sysinfo"></div>
             <p class="hint">开放端口后，同一局域网的电脑/手机浏览器直接访问上面的局域网地址即可使用同一套仪表与人才库；公网部署请自行加防火墙白名单或反代鉴权。</p>
           </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>AI 智能解析（本地 mini 大模型）</h3><span id="llm-badge" class="unit"></span></div>
+          <form id="llm-form" class="form">
+            <div class="form-row"><label class="check-line">
+              <input type="checkbox" name="llm_enabled"> 启用本地 AI 增强解析（Qwen2.5 GGUF，纯 CPU 离线推理；规则解析置信度低的简历自动交给 AI 补全字段）</label></div>
+            <div class="form-row">
+              <label class="form-label" for="set-llm-min">AI 触发阈值</label>
+              <input id="set-llm-min" name="llm_min_confidence" type="number" min="0" max="1" step="0.05" class="input w-120">
+              <span class="muted">规则解析置信度低于该值才调用 AI（批量导入提速；1.01 = 全部走 AI）</span>
+            </div>
+            <div class="form-row btn-row">
+              <button type="button" id="btn-save-llm" class="btn btn-primary">保存 AI 设置</button>
+            </div>
+          </form>
+          <div id="llm-status" class="db-info" style="margin-top:12px"></div>
+          <div class="card-head" style="margin-top:18px"><h3>模型下载</h3>
+            <span class="unit">模型不随程序分发，按需下载后自动启用；也可手动放入 <code id="llm-dir"></code></span></div>
+          <div class="model-row">
+            <select id="dl-model" aria-label="选择模型"></select>
+            <select id="dl-source" aria-label="选择下载源站"></select>
+            <button id="btn-dl-model" class="btn btn-primary">开始下载</button>
+          </div>
+          <div id="dl-progress" class="dl-progress" hidden>
+            <div class="dl-bar"><i id="dl-bar-fill"></i></div>
+            <span id="dl-text" class="muted"></span>
+          </div>
+          <p class="hint">国内网络推荐 hf-mirror / ModelScope 源；HuggingFace 官方源需国际网络。下载完成后无需重启，下一次简历导入自动启用 AI 增强。</p>
         </div>
       </section>
     </main>

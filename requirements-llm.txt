@@ -1,0 +1,5 @@
+# AI 智能解析组件（可选）——不装也能用，规则解析自动兜底
+# Linux/macOS CPU 预编译轮子安装：
+#   pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+# Windows 同理（有 win_amd64 预编译轮子）；若网络不通 GitHub，可 pip install llama-cpp-python 从源码编译（需 cmake+编译器）
+llama-cpp-python>=0.3.0

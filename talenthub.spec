@@ -22,6 +22,17 @@ for pkg in ("rapidocr_onnxruntime", "onnxruntime", "pypdfium2", "pdfplumber", "p
     binaries += b
     hiddenimports += h
 
+# AI 增强解析（可选依赖）：装了 llama-cpp-python 就打进二进制；没装自动跳过，
+# 运行时 llm_parser.status() 检测不到即回退纯规则解析（不影响主功能）。
+# 注意：GGUF 模型文件不打包（太大），由用户在「系统设置 → 模型下载」页自取。
+try:
+    d, b, h = collect_all("llama_cpp")
+    datas += d
+    binaries += b
+    hiddenimports += h
+except Exception:
+    print("[spec] llama_cpp 未安装，二进制不含 AI 增强解析（规则解析不受影响）")
+
 # 前端静态资源（index.html / style.css / app.js / vendor/echarts.min.js）
 datas += [(str(Path("app") / "static"), str(Path("app") / "static"))]
 
@@ -29,7 +40,8 @@ datas += [(str(Path("app") / "static"), str(Path("app") / "static"))]
 hiddenimports += [
     "app", "app.main", "app.config", "app.db",
     "app.extract", "app.extract.loader", "app.extract.ocr_engine", "app.extract.parser",
-    "app.services", "app.services.talent", "app.services.excel",
+    "app.extract.llm_parser",
+    "app.services", "app.services.talent", "app.services.excel", "app.services.model_hub",
     "uvicorn.logging", "uvicorn.loops", "uvicorn.loops.auto",
     "uvicorn.protocols", "uvicorn.protocols.http", "uvicorn.protocols.http.auto",
     "uvicorn.protocols.websockets", "uvicorn.protocols.websockets.auto",

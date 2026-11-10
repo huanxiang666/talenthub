@@ -212,6 +212,43 @@ def main():
         rr = s.get(f"{BASE}{asset}", timeout=10)
         check(f"静态资源 {asset}", rr.status_code == 200 and len(rr.content) > 500)
 
+    print("== 16. AI 模型端点 ==")
+    r = s.get(f"{BASE}/api/llm/status", timeout=10).json()
+    check("llm/status 结构完整", all(k in r for k in ("installed", "model_found", "enabled", "engine")))
+    r = s.get(f"{BASE}/api/llm/models", timeout=10).json()
+    check("模型目录 ≥3 个且含多源站", len(r["models"]) >= 3 and
+          all(len(m["urls"]) >= 2 for m in r["models"] if not m["label"].endswith("（用户自行放置）")))
+    check("模型目录含 models_dir", bool(r.get("models_dir")))
+    r = s.get(f"{BASE}/api/llm/download", timeout=10).json()
+    check("下载进度端点结构", "active" in r and "percent" in r)
+    r = s.post(f"{BASE}/api/llm/download", json={"model_id": "不存在", "source": "x"}, timeout=10)
+    check("非法模型 id 被拒 400", r.status_code == 400)
+    sysinfo = s.get(f"{BASE}/api/system", timeout=10).json()
+    check("system 含 llm 状态", "llm" in sysinfo and "engine" in sysinfo["llm"])
+
+    print("== 17. 新字段（v1.1）入库与导出往返 ==")
+    r = s.post(f"{BASE}/api/talents", json={"data": {
+        "name": "新字段测试", "phone": "13000009999", "wechat": "wx_abc",
+        "hometown": "浙江宁波", "political_status": "中共党员", "graduate_year": 2020,
+        "certificates": "CET-6、PMP", "languages": "英语（CET-6）",
+        "work_history": '[{"period":"2020.07-至今","company":"某某公司","title":"工程师"}]',
+        "project_experience": "主导过三个项目"}}, timeout=10)
+    check("新字段入库", r.status_code == 200 and r.json()["wechat"] == "wx_abc")
+    nid = r.json()["id"]
+    one = s.get(f"{BASE}/api/talents/{nid}", timeout=10).json()
+    check("work_history_list 已解析", isinstance(one.get("work_history_list"), list)
+          and one["work_history_list"][0]["company"] == "某某公司")
+    r = s.get(f"{BASE}/api/export/excel", params={"q": "新字段测试"}, timeout=30)
+    wb4 = load_workbook(io.BytesIO(r.content))
+    hdr4 = [c.value for c in wb4.active[1]]
+    row4 = {h: c.value for h, c in zip(hdr4, wb4.active[2])}
+    check("xlsx 含新列且值正确",
+          row4.get("微信") == "wx_abc" and row4.get("籍贯") == "浙江宁波"
+          and row4.get("毕业年份") == 2020 and "某某公司" in str(row4.get("工作经历")))
+    r = s.get(f"{BASE}/api/export/csv", params={"q": "新字段测试"}, timeout=30)
+    check("csv 含新字段", "wx_abc" in r.content.decode("utf-8-sig"))
+    s.delete(f"{BASE}/api/talents/{nid}", timeout=10)
+
     print(f"\n全部通过：{len(PASSED)} 项断言 ✓")
 
 

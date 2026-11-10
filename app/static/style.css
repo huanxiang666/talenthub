@@ -1,32 +1,33 @@
 /* TalentHub 设计系统 — 「墨青纸感」：暖纸底 + 墨青侧栏 + 琥珀点缀。
    全部间距/圆角/色彩走 token，禁止散写魔法值。 */
 :root {
-  --bg: #f4f3ee;
+  --bg: #f8fafc;
   --surface: #ffffff;
-  --surface-2: #faf9f5;
-  --ink: #22302c;
-  --ink-2: #4c5a55;
-  --muted: #8a928d;
-  --line: #e5e2d8;
-  --line-strong: #d5d1c4;
-  --sidebar: #14231f;
-  --sidebar-2: #1c332d;
-  --sidebar-ink: #cfe0d8;
-  --primary: #0f766e;
-  --primary-deep: #0b544e;
-  --primary-soft: #e0f0ed;
-  --accent: #d97706;
-  --accent-soft: #fdf1de;
-  --danger: #be3455;
-  --danger-soft: #fbe9ed;
-  --ok: #15803d;
+  --surface-2: #f1f5f9;
+  --surface-hover: #f8fafc;
+  --ink: #0f172a;
+  --ink-2: #334155;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --line-strong: #cbd5e1;
+  --sidebar: #0f172a;
+  --sidebar-2: #1e293b;
+  --sidebar-ink: #cbd5e1;
+  --primary: #0284c7;
+  --primary-deep: #0369a1;
+  --primary-soft: #e0f2fe;
+  --accent: #f59e0b;
+  --accent-soft: #fef3c7;
+  --danger: #ef4444;
+  --danger-soft: #fee2e2;
+  --ok: #10b981;
   --radius: 12px;
   --radius-sm: 8px;
-  --shadow: 0 1px 2px rgba(34, 48, 44, .05), 0 4px 16px rgba(34, 48, 44, .06);
-  --shadow-lg: 0 8px 40px rgba(20, 35, 31, .18);
-  --font: "PingFang SC", "HarmonyOS Sans SC", "Source Han Sans SC", "Microsoft YaHei",
-          "Noto Sans CJK SC", "Segoe UI", system-ui, sans-serif;
-  --transition: 160ms cubic-bezier(.2, 0, 0, 1);
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.07);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --font: "Inter", "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+  --transition: 180ms cubic-bezier(.16, 1, .3, 1);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -121,7 +122,12 @@ select:focus-visible, textarea:focus-visible {
 .card {
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: var(--shadow);
-  padding: 18px 20px;
+  padding: 20px 24px;
+  transition: box-shadow var(--transition), border-color var(--transition);
+}
+.card:hover {
+  box-shadow: var(--shadow-lg);
+  border-color: #cbd5e1;
 }
 .card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 10px; flex-wrap: wrap; }
 .card-head h3 { font-size: 15px; font-weight: 700; }
@@ -215,13 +221,13 @@ select:focus, .input:focus { outline: 0; border-color: var(--primary); box-shado
 .table-wrap { overflow-x: auto; }
 .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .data-table th {
-  text-align: left; font-weight: 600; color: var(--ink-2); font-size: 12px;
-  padding: 9px 10px; border-bottom: 2px solid var(--line-strong);
+  text-align: left; font-weight: 600; color: var(--ink-2); font-size: 12.5px;
+  padding: 12px 14px; border-bottom: 2px solid var(--line-strong);
   background: var(--surface-2); white-space: nowrap; letter-spacing: .3px;
   position: sticky; top: 0; z-index: 1;
 }
 .data-table td {
-  padding: 10px; border-bottom: 1px solid var(--line); vertical-align: middle;
+  padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: middle;
   white-space: nowrap;
 }
 .data-table td.wrap { white-space: normal; min-width: 180px; }
@@ -305,15 +311,17 @@ input[type="checkbox"] { accent-color: var(--primary); width: 15px; height: 15px
 .empty .sub { font-size: 13px; font-weight: 400; margin-top: 6px; }
 
 /* ============ 状态色 ============ */
-.st-潜在 { background: #eef1f5; color: #52616f; }
-.st-跟进中 { background: #e3edfd; color: #2456c9; }
-.st-已邀约 { background: #ece6fd; color: #6640d8; }
-.st-已面试 { background: var(--accent-soft); color: #a35c05; }
-.st-已录用 { background: #e2f4e6; color: var(--ok); }
-.st-不合适 { background: var(--danger-soft); color: var(--danger); }
-.st-已归档 { background: #efefec; color: #75756e; }
-.rb-A { background: var(--ok); } .rb-B { background: #2f6fed; }
-.rb-C { background: var(--accent); } .rb-D { background: #98a19c; }
+.st-潜在 { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
+.st-跟进中 { background: #e0f2fe; color: #0284c7; border-color: #bae6fd; font-weight: 600; }
+.st-已邀约 { background: #f3e8ff; color: #9333ea; border-color: #e9d5ff; }
+.st-已面试 { background: #fef3c7; color: #d97706; border-color: #fde68a; font-weight: 600; }
+.st-已录用 { background: #d1fae5; color: #059669; border-color: #a7f3d0; font-weight: 700; }
+.st-不合适 { background: #fee2e2; color: #dc2626; border-color: #fecaca; }
+.st-已归档 { background: #f1f5f9; color: #94a3b8; border-color: #e2e8f0; }
+.rb-A { background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 2px 4px rgba(16,185,129,0.3); } 
+.rb-B { background: linear-gradient(135deg, #0284c7, #0369a1); box-shadow: 0 2px 4px rgba(2,132,199,0.3); }
+.rb-C { background: linear-gradient(135deg, #f59e0b, #d97706); box-shadow: 0 2px 4px rgba(245,158,11,0.3); } 
+.rb-D { background: #94a3b8; }
 
 /* ============ 导入中心 ============ */
 .tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--line); }
@@ -328,14 +336,21 @@ input[type="checkbox"] { accent-color: var(--primary); width: 15px; height: 15px
 .tab-panel { display: flex; flex-direction: column; gap: 18px; margin-top: 18px; }
 
 .dropzone {
-  border: 2px dashed var(--line-strong); border-radius: var(--radius);
-  padding: 44px 20px; text-align: center; color: var(--ink-2);
-  transition: all var(--transition); background: var(--surface-2);
+  border: 2px dashed #93c5fd; border-radius: var(--radius);
+  padding: 48px 24px; text-align: center; color: var(--ink-2);
+  transition: all var(--transition); background: linear-gradient(180deg, #f0f9ff 0%, #ffffff 100%);
+  position: relative;
 }
-.dropzone svg { width: 42px; height: 42px; color: var(--primary); margin-bottom: 12px; opacity: .8; }
-.dropzone p { font-size: 14.5px; }
-.dropzone .sub { font-size: 12.5px; color: var(--muted); margin-top: 7px; }
-.dropzone.dragover { border-color: var(--primary); background: var(--primary-soft); transform: scale(1.005); }
+.dropzone-icon-wrap {
+  width: 64px; height: 64px; margin: 0 auto 16px;
+  background: var(--primary-soft); border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+}
+.dropzone-icon-wrap svg { width: 32px; height: 32px; color: var(--primary); }
+.dropzone-title { font-size: 16px; color: var(--ink); margin-bottom: 14px; }
+.dropzone-btns { margin-bottom: 12px; }
+.dropzone .sub { font-size: 12.5px; color: var(--muted); max-width: 640px; margin: 0 auto; line-height: 1.6; }
+.dropzone.dragover { border-color: var(--primary); background: #e0f2fe; transform: scale(1.008); box-shadow: 0 0 0 4px rgba(2, 132, 199, 0.15); }
 
 .progress-line { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-size: 12.5px; color: var(--muted); }
 .progress-line .bar { flex: 1; height: 6px; background: var(--line); border-radius: 99px; overflow: hidden; }
@@ -486,3 +501,14 @@ input[type="checkbox"] { accent-color: var(--primary); width: 15px; height: 15px
   .drawer { width: 100vw; }
   .modal { width: 96vw; padding: 18px 16px; }
 }
+
+/* ============ AI 模型管理（v1.1） ============ */
+.model-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+.model-row select { max-width: 420px; }
+.dl-progress { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.dl-bar { flex: 1; max-width: 480px; height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; }
+.dl-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--primary), #38bdf8); border-radius: 99px; transition: width 400ms; }
+#llm-badge { font-weight: 600; }
+.llm-on { color: var(--ok); }
+.llm-off { color: var(--muted); }
+.method-badge.mb-ai { background: #ede9fe; color: #7c3aed; }

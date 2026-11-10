@@ -14,13 +14,18 @@ WRITABLE = {
     "expected_salary", "skills", "source", "source_file", "stored_path",
     "status", "rating", "tags", "summary", "raw_text", "extract_method",
     "parse_confidence",
+    # v1.1 新增（LLM 增强解析字段）
+    "wechat", "hometown", "political_status", "graduate_year", "certificates",
+    "languages", "work_history", "project_experience",
 }
 SORTABLE = {
     "created_at", "updated_at", "name", "rating", "status", "work_years",
-    "parse_confidence", "id",
+    "parse_confidence", "id", "graduate_year",
 }
 
 MERGE_STRATEGIES = ("skip", "fill", "overwrite", "always_new")
+
+NUM_NONE_FIELDS = ("age", "work_years", "parse_confidence", "graduate_year")
 
 
 def _clean(data: dict) -> dict:
@@ -29,9 +34,9 @@ def _clean(data: dict) -> dict:
         if k not in WRITABLE:
             continue
         if v is None or v == "":
-            out[k] = None if k in ("age", "work_years", "parse_confidence") else ""
+            out[k] = None if k in NUM_NONE_FIELDS else ""
             continue
-        if k in ("age",):
+        if k in ("age", "graduate_year"):
             try:
                 out[k] = int(float(v))
             except (TypeError, ValueError):
@@ -64,6 +69,16 @@ def row_to_dict(row) -> dict:
         d["notes"] = json.loads(d.get("notes") or "[]")
     except json.JSONDecodeError:
         d["notes"] = []
+    # work_history 存 JSON 字符串，出参转 list；坏数据降级为空表（不吞原始串）
+    wh = d.get("work_history") or ""
+    if isinstance(wh, str) and wh.strip():
+        try:
+            parsed = json.loads(wh)
+            d["work_history_list"] = parsed if isinstance(parsed, list) else []
+        except json.JSONDecodeError:
+            d["work_history_list"] = []
+    else:
+        d["work_history_list"] = []
     return d
 
 
@@ -77,8 +92,9 @@ def list_talents(q: str = "", status: str = "", rating: str = "", education: str
         like = f"%{q.strip()}%"
         where.append("(name LIKE ? OR phone LIKE ? OR email LIKE ? OR skills LIKE ? "
                      "OR current_company LIKE ? OR current_title LIKE ? OR expected_title LIKE ? "
-                     "OR school LIKE ? OR major LIKE ? OR city LIKE ? OR tags LIKE ? OR summary LIKE ?)")
-        params += [like] * 12
+                     "OR school LIKE ? OR major LIKE ? OR city LIKE ? OR tags LIKE ? OR summary LIKE ? "
+                     "OR certificates LIKE ? OR languages LIKE ? OR work_history LIKE ? OR wechat LIKE ?)")
+        params += [like] * 16
     if status:
         where.append("status = ?")
         params.append(status)

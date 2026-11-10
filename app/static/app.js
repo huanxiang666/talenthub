@@ -17,10 +17,14 @@ const FORM_FIELDS = [
   { key: "age", label: "年龄", type: "number" },
   { key: "phone", label: "电话", type: "text" },
   { key: "email", label: "邮箱", type: "text" },
+  { key: "wechat", label: "微信", type: "text" },
   { key: "city", label: "城市", type: "text" },
+  { key: "hometown", label: "籍贯", type: "text" },
+  { key: "political_status", label: "政治面貌", type: "select", options: ["", "群众", "共青团员", "中共党员", "预备党员", "民主党派", "无党派人士"] },
   { key: "education", label: "学历", type: "select", options: ["", ...EDU_OPTIONS] },
   { key: "school", label: "毕业院校", type: "text" },
   { key: "major", label: "专业", type: "text" },
+  { key: "graduate_year", label: "毕业年份", type: "number" },
   { key: "work_years", label: "工作年限", type: "number", step: "0.5" },
   { key: "current_company", label: "当前公司", type: "text" },
   { key: "current_title", label: "当前职位", type: "text" },
@@ -30,9 +34,22 @@ const FORM_FIELDS = [
   { key: "rating", label: "评级", type: "select", options: ["", ...RATINGS] },
   { key: "tags", label: "标签", type: "text", placeholder: "多个标签用、分隔" },
   { key: "source", label: "来源", type: "text", placeholder: "招聘会/内推/猎聘…" },
+  { key: "certificates", label: "证书", type: "text", wide: true, placeholder: "多个证书用、分隔" },
+  { key: "languages", label: "语言能力", type: "text", wide: true, placeholder: "如 英语（CET-6）、日语（N1）" },
   { key: "skills", label: "技能", type: "textarea", wide: true },
+  { key: "work_history", label: "工作经历（每段一行：时间 公司 职位）", type: "textarea", wide: true },
+  { key: "project_experience", label: "项目经验", type: "textarea", wide: true },
   { key: "summary", label: "简介 / 自我评价", type: "textarea", wide: true },
 ];
+
+/* work_history 在库里是 JSON 串，编辑表单里转成每段一行的可读文本 */
+function whToText(wh) {
+  if (!wh) return "";
+  if (!String(wh).trim().startsWith("[")) return String(wh);
+  try {
+    return JSON.parse(wh).map(s => [s.period, s.company, s.title].filter(Boolean).join("  ")).join("\n");
+  } catch (_) { return String(wh); }
+}
 
 /* ================= 小工具 ================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -480,7 +497,7 @@ async function openDrawer(id) {
   $("#d-avatar").style.background = avatarColor(t.name || t.id);
   $("#d-title").textContent = t.name || "未命名";
   $("#d-subtitle").textContent = [t.current_title || t.expected_title, t.current_company, t.city].filter(Boolean).join(" · ") || "字段待完善";
-  buildForm($("#d-form"), t);
+  buildForm($("#d-form"), { ...t, work_history: whToText(t.work_history) });
   $("#d-note-count").textContent = (t.notes || []).length || "";
   $("#d-notes").innerHTML = (t.notes || []).slice().reverse().map(n =>
     `<div class="note-item"><div class="n-time">${esc(n.time)}</div><div class="n-text">${esc(n.text)}</div></div>`).join("")
@@ -596,9 +613,13 @@ function setProgress(sel, on, text = "") {
 bindDropzone("#dropzone-resume", "#file-resume", uploadResumes);
 
 async function uploadResumes(files) {
-  setProgress("#resume-progress", true, `正在解析 ${files.length} 份文件（扫描版走 OCR，请稍候）…`);
+  const forceLlm = $("#force-llm") && $("#force-llm").checked;
+  setProgress("#resume-progress", true, forceLlm
+    ? `正在 AI 增强解析 ${files.length} 份文件（每份需本地模型推理，请耐心等待）…`
+    : `正在解析 ${files.length} 份文件（扫描版走 OCR，请稍候）…`);
   const fd = new FormData();
   files.forEach(f => fd.append("files", f));
+  fd.append("force_llm", forceLlm ? "1" : "0");
   let r;
   try { r = await api("/api/import/resumes", { method: "POST", body: fd }); }
   catch (e) { setProgress("#resume-progress", false); toast(e.message, "err", "上传失败"); return; }
@@ -609,15 +630,19 @@ async function uploadResumes(files) {
   failResults.forEach(f => toast(`${f.filename}: ${f.error}`, "err", "解析失败"));
   if (!okResults.length) { if (failResults.length) toast("全部文件解析失败，请检查文件格式", "err"); return; }
 
-  state.drafts = okResults.map(x => ({ ...x.draft, _file: x.filename, _method: x.method, _conf: x.draft.parse_confidence || 0, _warnings: x.warnings || [] }));
+  state.drafts = okResults.map(x => ({ ...x.draft, _file: x.filename, _method: x.method, _llm: !!x.llm_used, _conf: x.draft.parse_confidence || 0, _warnings: x.warnings || [] }));
   renderDrafts();
-  toast(`成功解析 ${okResults.length}/${r.total} 份，OCR 引擎${r.ocr_status.loaded || r.ocr_status.installed ? "就绪" : "不可用"}`);
+  const llmNote = r.llm_used_count ? `，其中 ${r.llm_used_count} 份经本地 AI 增强` : "";
+  toast(`成功解析 ${okResults.length}/${r.total} 份${llmNote}`, "ok", "解析完成");
 }
 
-function methodBadge(m) {
-  if (m === "pdf_ocr" || m === "image_ocr") return `<span class="method-badge mb-ocr" title="扫描版走内置 OCR 识别">OCR</span>`;
-  if (m === "docx") return `<span class="method-badge mb-docx" title="Word 文档文本层">Word</span>`;
-  return `<span class="method-badge mb-text" title="PDF 文字层直读">文本层</span>`;
+function methodBadge(m, llm) {
+  let b;
+  if (m === "pdf_ocr" || m === "image_ocr") b = `<span class="method-badge mb-ocr" title="扫描版走内置 OCR 识别">OCR</span>`;
+  else if (m === "docx") b = `<span class="method-badge mb-docx" title="Word 文档文本层">Word</span>`;
+  else b = `<span class="method-badge mb-text" title="PDF 文字层直读">文本层</span>`;
+  if (llm) b += ` <span class="method-badge mb-ai" title="本地大模型增强解析">AI</span>`;
+  return b;
 }
 
 function renderDrafts() {
@@ -626,7 +651,7 @@ function renderDrafts() {
   $("#draft-tbody").innerHTML = state.drafts.map((d, i) => `
     <tr data-i="${i}" class="${d._conf < 0.6 ? "low-conf" : ""}">
       <td class="wrap" style="max-width:190px;overflow:hidden;text-overflow:ellipsis" title="${esc(d._file + (d._warnings.length ? "\n⚠ " + d._warnings.join("\n⚠ ") : ""))}">${esc(d._file)}${d._warnings.length ? " ⚠" : ""}</td>
-      <td>${methodBadge(d._method)}</td>
+      <td>${methodBadge(d._method, d._llm)}</td>
       <td>${confBar(d._conf)}</td>
       <td><input data-f="name" value="${esc(d.name)}" placeholder="必填" aria-label="姓名"></td>
       <td><input data-f="phone" value="${esc(d.phone)}" aria-label="电话"></td>
@@ -769,8 +794,94 @@ async function loadSettings() {
       <div class="si-row"><span class="si-k">监听</span><span class="si-v">${esc(sys.host)}:${sys.port} ${sys.open_to_lan ? '<span class="pill st-已录用">端口已开放</span>' : '<span class="pill st-潜在">仅本机</span>'}</span></div>`;
     $("#sys-urls").innerHTML = sys.urls.map((u, i) =>
       `<div class="si-row"><span class="si-k">${i === 0 ? "本机访问" : "局域网访问"}</span><span class="si-v"><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a></span></div>`).join("");
+    /* AI 面板 */
+    const llmForm = $("#llm-form");
+    llmForm.llm_enabled.checked = !!cfg.llm_enabled;
+    llmForm.llm_min_confidence.value = cfg.llm_min_confidence ?? 0.75;
+    const L = sys.llm || {};
+    $("#llm-badge").innerHTML = L.enabled
+      ? `<span class="llm-on">● AI 就绪${L.loaded ? "（模型已加载）" : ""}</span>`
+      : `<span class="llm-off">● AI 未启用</span>`;
+    let why = "";
+    if (!L.installed) why = "llama-cpp-python 未安装（见 README「AI 智能解析」）";
+    else if (!L.model_found) why = "未找到模型文件——在下方选择一个模型下载，或手动放入模型目录";
+    $("#llm-status").innerHTML = `
+      引擎：${esc(L.engine || "-")}<br>
+      状态：${L.enabled ? `<span style="color:var(--ok)">可用</span>` : `<span style="color:var(--muted)">不可用</span>`}${why ? `（${esc(why)}）` : ""}<br>
+      模型：${esc(L.model_name || "（未安装）")}${L.load_error ? `<br><span style="color:var(--danger)">${esc(L.load_error)}</span>` : ""}`;
+    loadModelPanel();
   } catch (e) { toast(e.message, "err", "设置加载失败"); }
 }
+
+/* ---- AI 模型下载面板 ---- */
+let llmModels = [];
+async function loadModelPanel() {
+  try {
+    const r = await api("/api/llm/models");
+    llmModels = r.models;
+    $("#llm-dir").textContent = r.models_dir;
+    const sel = $("#dl-model");
+    sel.innerHTML = llmModels.map(m =>
+      `<option value="${esc(m.id)}" ${m.downloaded ? "disabled" : ""}>${esc(m.label)} · ~${m.size_mb}MB${m.downloaded ? "（已下载 ✓）" : ""}</option>`).join("");
+    const firstAvail = llmModels.find(m => !m.downloaded);
+    if (firstAvail) sel.value = firstAvail.id;
+    fillSourceSelect();
+    if (r.download && (r.download.active || r.download.error)) renderDlProgress(r.download);
+  } catch (e) { toast(e.message, "err", "模型列表加载失败"); }
+}
+function fillSourceSelect() {
+  const m = llmModels.find(x => x.id === $("#dl-model").value);
+  $("#dl-source").innerHTML = m ? Object.keys(m.urls).map(s => `<option>${esc(s)}</option>`).join("") : "";
+}
+$("#dl-model").addEventListener("change", fillSourceSelect);
+
+let dlTimer = null;
+function renderDlProgress(p) {
+  const box = $("#dl-progress");
+  if (!p || (!p.active && !p.error && !p.done_file)) { box.hidden = true; return; }
+  box.hidden = false;
+  if (p.error) {
+    $("#dl-bar-fill").style.width = "100%";
+    $("#dl-bar-fill").style.background = "var(--danger)";
+    $("#dl-text").innerHTML = `<span style="color:var(--danger)">下载失败：${esc(p.error)}</span>`;
+    stopDlPoll();
+    return;
+  }
+  $("#dl-bar-fill").style.background = "";
+  $("#dl-bar-fill").style.width = `${p.percent || 0}%`;
+  $("#dl-text").textContent = p.active
+    ? `${p.file} — ${p.percent}%（${p.downloaded_mb}/${p.total_mb} MB，${p.speed_mbps} MB/s）`
+    : `✓ 下载完成：${p.done_file}`;
+  if (!p.active && p.done_file) { stopDlPoll(); loadModelPanel(); loadSettings(); }
+}
+function stopDlPoll() { if (dlTimer) { clearInterval(dlTimer); dlTimer = null; } }
+
+$("#btn-dl-model").addEventListener("click", async () => {
+  const model_id = $("#dl-model").value, source = $("#dl-source").value;
+  if (!model_id || !source) { toast("请选择模型与源站", "warn"); return; }
+  const btn = $("#btn-dl-model");
+  btn.disabled = true;
+  try {
+    await api("/api/llm/download", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model_id, source }) });
+    toast("开始下载，大文件需数分钟，可离开本页稍后回来看进度");
+    $("#dl-progress").hidden = false;
+    stopDlPoll();
+    dlTimer = setInterval(async () => {
+      try { renderDlProgress(await api("/api/llm/download")); }
+      catch (_) { stopDlPoll(); }
+    }, 1500);
+  } catch (e) { toast(e.message, "err", "下载启动失败"); }
+  finally { btn.disabled = false; }
+});
+$("#btn-save-llm").addEventListener("click", async () => {
+  const f = $("#llm-form");
+  try {
+    await api("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ llm_enabled: f.llm_enabled.checked, llm_min_confidence: Number(f.llm_min_confidence.value) }) });
+    toast("AI 设置已保存"); loadSettings();
+  } catch (e) { toast(e.message, "err", "保存失败"); }
+});
+
 $("#btn-save-settings").addEventListener("click", saveSettings);
 $("#btn-restart").addEventListener("click", async () => {
   await saveSettings(true);
@@ -823,6 +934,13 @@ $("#btn-upload-top").addEventListener("click", () => {
   location.hash = "#/import";
   setTimeout(() => $("#file-resume").click(), 120);
 });
+const batchUpBtn = $("#btn-batch-upload");
+if (batchUpBtn) {
+  batchUpBtn.addEventListener("click", () => {
+    location.hash = "#/import";
+    setTimeout(() => $("#file-resume").click(), 120);
+  });
+}
 
 async function initShell() {
   /* 下拉初始化 */

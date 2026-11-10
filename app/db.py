@@ -55,14 +55,30 @@ CREATE TABLE IF NOT EXISTS events (
 );
 """
 
+# 增量迁移列（老库 ALTER TABLE 补列；已存在时忽略 Duplicate column 错误）
+MIGRATE_COLUMNS = [
+    ("wechat", "TEXT DEFAULT ''"),
+    ("hometown", "TEXT DEFAULT ''"),
+    ("political_status", "TEXT DEFAULT ''"),
+    ("graduate_year", "INTEGER"),
+    ("certificates", "TEXT DEFAULT ''"),
+    ("languages", "TEXT DEFAULT ''"),
+    ("work_history", "TEXT DEFAULT ''"),   # JSON: [{period, company, title}]
+    ("project_experience", "TEXT DEFAULT ''"),
+]
+
 # 人才字段（导出/导入/表单共用同一份定义，防止三处漂移）
 FIELDS = [
     ("name", "姓名"), ("gender", "性别"), ("age", "年龄"), ("phone", "电话"),
-    ("email", "邮箱"), ("city", "城市"), ("education", "学历"), ("school", "毕业院校"),
-    ("major", "专业"), ("work_years", "工作年限"), ("current_company", "当前公司"),
-    ("current_title", "当前职位"), ("expected_title", "期望职位"), ("expected_salary", "期望薪资"),
-    ("skills", "技能"), ("status", "状态"), ("rating", "评级"), ("tags", "标签"),
-    ("source", "来源"), ("summary", "简介"), ("source_file", "源文件"),
+    ("email", "邮箱"), ("wechat", "微信"), ("city", "城市"), ("hometown", "籍贯"),
+    ("political_status", "政治面貌"), ("education", "学历"), ("school", "毕业院校"),
+    ("major", "专业"), ("graduate_year", "毕业年份"), ("work_years", "工作年限"),
+    ("current_company", "当前公司"), ("current_title", "当前职位"),
+    ("expected_title", "期望职位"), ("expected_salary", "期望薪资"),
+    ("skills", "技能"), ("certificates", "证书"), ("languages", "语言能力"),
+    ("status", "状态"), ("rating", "评级"), ("tags", "标签"),
+    ("source", "来源"), ("summary", "简介"), ("work_history", "工作经历"),
+    ("project_experience", "项目经验"), ("source_file", "源文件"),
     ("extract_method", "提取方式"), ("parse_confidence", "解析置信度"),
     ("created_at", "创建时间"), ("updated_at", "更新时间"),
 ]
@@ -102,6 +118,13 @@ def db():
 def init_db() -> None:
     with db() as conn:
         conn.executescript(SCHEMA)
+        # 增量迁移：老库补新列（v1.1 新增 微信/籍贯/政治面貌/毕业年份/证书/语言/工作经历/项目经验）
+        for col, decl in MIGRATE_COLUMNS:
+            try:
+                conn.execute(f"ALTER TABLE talents ADD COLUMN {col} {decl}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
         # 幂等迁移：存量邮箱归一为小写（去重键大小写不敏感的前提，2026-11 复核阻断项#1）
         conn.execute("UPDATE talents SET email = lower(email) WHERE email <> lower(email)")
 
