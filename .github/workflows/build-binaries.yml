@@ -1,0 +1,48 @@
+# 云端构建 Windows exe / Linux 二进制（无需本机环境）
+# 用法：把项目推到 GitHub 仓库 → Actions 页 → build-binaries → Run workflow
+#      完成后在 run 页面底部 Artifacts 下载 TalentHub-windows-latest（内含 TalentHub.exe）
+name: build-binaries
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: TalentHub-windows
+          - os: ubuntu-latest
+            artifact: TalentHub-linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build single-file binary
+        run: pyinstaller talenthub.spec --noconfirm
+
+      - name: Smoke test (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          ./dist/talenthub --no-open --port 8399 &
+          sleep 12
+          curl -sf http://127.0.0.1:8399/api/health
+          kill %1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/
+          compression-level: 9

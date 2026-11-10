@@ -1,0 +1,15 @@
+# 运行时产物
+data/
+config.json
+.venv/
+.venv-build/
+__pycache__/
+*.pyc
+
+# 打包产物
+build/
+dist/
+
+# 系统
+.DS_Store
+Thumbs.db

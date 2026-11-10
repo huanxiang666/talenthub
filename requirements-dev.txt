@@ -1,0 +1,4 @@
+# 开发/测试额外依赖（运行主体只需 requirements.txt）
+-r requirements.txt
+fpdf2>=2.7        # scripts/make_samples.py 生成文字版 PDF 样本
+requests>=2.31    # scripts/e2e_test.py 端到端验收
