@@ -1,0 +1,43 @@
+# 把已成功的构建工件直接挂到 Release（云端内网速度，绕开本地慢下载）
+# 用法：Actions → attach-release-assets → Run workflow（填构建 run id 与 tag）
+name: attach-release-assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "build-binaries 的 run id（工件来源）"
+        required: true
+        default: "42771461836"
+      tag:
+        description: "目标 Release tag"
+        required: true
+        default: "v1.0.0"
+
+jobs:
+  attach:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write    # 上传 Release 资产
+      actions: read      # 读取其它 run 的工件
+    steps:
+      - name: Download windows artifact from run ${{ inputs.run_id }}
+        uses: actions/download-artifact@v4
+        with:
+          name: TalentHub-windows
+          path: win
+          run-id: ${{ inputs.run_id }}
+
+      - name: Verify exe
+        run: |
+          ls -la win/
+          file win/TalentHub.exe
+          head -c 2 win/TalentHub.exe | od -c | head -1   # 应为 M Z
+          du -h win/TalentHub.exe
+
+      - name: Upload to Release ${{ inputs.tag }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ inputs.tag }}" win/TalentHub.exe --clobber --repo "${{ github.repository }}"
+          gh release view "${{ inputs.tag }}" --repo "${{ github.repository }}" --json assets --jq '.assets[].name'
