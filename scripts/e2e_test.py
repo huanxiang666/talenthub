@@ -365,6 +365,9 @@ def main():
     au = s.get(f"{BASE}/api/auth/audit", timeout=10).json()
     fails = [x for x in au["items"] if x["ok"] == 0]
     check("审计记录失败尝试含 IP", len(fails) >= 6 and all(x["ip"] for x in fails))
+    # 收尾：关闭锁屏恢复环境（disable 走密码校验、不受冻结影响）
+    r = s.post(f"{BASE}/api/auth/disable", json={"password": "e2efreeze1"}, timeout=10)
+    check("e2e 收尾关闭锁屏", r.status_code == 200 and r.json()["enabled"] is False)
 
     print(f"\n全部通过：{len(PASSED)} 项断言 ✓")
 
