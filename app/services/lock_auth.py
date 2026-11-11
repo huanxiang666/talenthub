@@ -15,6 +15,7 @@ import hmac
 import json
 import os
 import secrets
+import threading
 import time
 from pathlib import Path
 
@@ -71,11 +72,79 @@ def verify_password(password: str) -> bool:
     return hmac.compare_digest(dk.hex(), d["hash"])
 
 
-def unlock(password: str) -> dict:
+# ---------- 防破解：连续失败冻结 ----------
+FAIL_LIMIT = 5           # 窗口内连续失败次数上限
+FREEZE_SECONDS = 60      # 触发后冻结时长（秒）
+_fail_log: dict[str, list[float]] = {}   # ip -> 失败时间戳（进程内存，重启清零）
+_fail_lock = threading.Lock()
+
+
+class FrozenError(Exception):
+    def __init__(self, retry_after: int):
+        super().__init__(f"密码错误次数过多，已冻结，请 {retry_after} 秒后再试")
+        self.retry_after = retry_after
+
+
+def _frozen_remaining(ip: str) -> int:
+    """返回该 IP 还需冻结的秒数（0=未冻结）。"""
+    with _fail_lock:
+        stamps = _fail_log.get(ip, [])
+        recent = [t for t in stamps if time.time() - t < FREEZE_SECONDS]
+        _fail_log[ip] = recent
+        if len(recent) >= FAIL_LIMIT:
+            return int(FREEZE_SECONDS - (time.time() - recent[0])) + 1
+        return 0
+
+
+def _note_fail(ip: str) -> None:
+    with _fail_lock:
+        _fail_log.setdefault(ip, []).append(time.time())
+
+
+def _clear_fails(ip: str) -> None:
+    with _fail_lock:
+        _fail_log.pop(ip, None)
+
+
+def unlock(password: str, ip: str = "") -> dict:
+    """解锁。连续 5 次错误密码冻结该来源 60 秒；每次尝试（含 IP）写入审计表。"""
+    from .. import db
+    wait = _frozen_remaining(ip)
+    if wait > 0:
+        # 冻结期的尝试同样记入审计（用户要求：警告记录来源地址）
+        try:
+            db.record_lock_attempt(ip, False, f"冻结期内尝试解锁被拒（剩余 {wait}s）")
+            db.log_event("lock_warning", f"⚠ 冻结期内仍有解锁尝试 来源IP={ip or '未知'}，剩余冻结 {wait}s")
+        except Exception:
+            pass
+        raise FrozenError(wait)
     if not verify_password(password):
-        raise PermissionError("密码错误")
+        _note_fail(ip)
+        left = FAIL_LIMIT - len(_fail_log.get(ip, []))
+        try:
+            db.record_lock_attempt(ip, False, f"密码错误（冻结前还剩 {max(left, 0)} 次机会）")
+            db.log_event("lock_warning", f"⚠ 锁屏密码错误尝试 来源IP={ip or '未知'}"
+                         + (f"，再错 {max(left, 0)} 次将冻结 {FREEZE_SECONDS} 秒" if left > 0
+                            else f"，已触发 {FREEZE_SECONDS} 秒冻结"))
+        except Exception:
+            pass  # 审计失败不阻断鉴权主流程
+        raise PermissionError(f"密码错误（连续 {FAIL_LIMIT} 次错误将冻结 {FREEZE_SECONDS} 秒）")
+    _clear_fails(ip)
+    try:
+        db.record_lock_attempt(ip, True, "解锁成功")
+    except Exception:
+        pass
     return {"token": make_token(), "expires_in": TOKEN_TTL_SECONDS,
             "auto_lock_minutes": int((_read() or {}).get("auto_lock_minutes", 30))}
+
+
+def lock_audit(limit: int = 50) -> list[dict]:
+    """最近的锁屏尝试审计（设置页展示警告记录）。"""
+    from .. import db
+    with db.db() as conn:
+        rows = conn.execute("SELECT * FROM lock_attempts ORDER BY id DESC LIMIT ?",
+                            (min(limit, 200),)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def make_token() -> str:

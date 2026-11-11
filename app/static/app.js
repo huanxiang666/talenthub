@@ -183,7 +183,7 @@ function confBar(c) {
 /* ================= 全局状态 ================= */
 const state = {
   view: "dashboard",
-  query: { q: "", status: "", rating: "", education: "", sort: "created_at", order: "desc", page: 1, size: 15 },
+  query: { q: "", status: "", rating: "", education: "", skill: "", sort: "created_at", order: "desc", page: 1, size: 15 },
   selected: new Set(),
   drafts: [],
   tablePreview: null,
@@ -196,6 +196,7 @@ const VIEW_TITLES = {
   dashboard: ["仪表盘", "人才结构一眼看清"],
   talents: ["人才库", "精准管理潜在人才"],
   applications: ["投递审核", "候选人投递 · 同意入选 / 拒绝"],
+  ai: ["AI 助手", "本地小模型 / 外部大模型 · 流式对话"],
   import: ["导入中心", "简历自动提取 · 表格合并导入"],
   data: ["数据管理", "导出 / 备份 / 合并 / 日志"],
   settings: ["系统设置", "端口 · AI · 锁屏 · 版权"],
@@ -209,7 +210,7 @@ function route() {
   $$(".view").forEach(v => { v.hidden = v.id !== `view-${state.view}`; });
   $("#page-title").textContent = VIEW_TITLES[state.view][0];
   $("#page-sub").textContent = VIEW_TITLES[state.view][1];
-  const loaders = { dashboard: loadDashboard, talents: loadTalents, applications: loadApplications, data: loadDataView, settings: loadSettings };
+  const loaders = { dashboard: loadDashboard, talents: loadTalents, applications: loadApplications, ai: loadAiView, data: loadDataView, settings: loadSettings };
   (loaders[state.view] || (() => {}))();
   $("#content").scrollTop = 0;
 }
@@ -495,6 +496,7 @@ $("#f-rating").addEventListener("change", e => {
   state.query.page = 1; loadTalents();
 });
 $("#f-edu").addEventListener("change", e => { state.query.education = e.target.value; state.query.page = 1; loadTalents(); });
+$("#f-skill").addEventListener("change", e => { state.query.skill = e.target.value; state.query.page = 1; loadTalents(); });
 $("#f-sort").addEventListener("change", e => {
   const [sort, order] = e.target.value.split(":");
   state.query.sort = sort; state.query.order = order; loadTalents();
@@ -771,6 +773,102 @@ $("#a-status").addEventListener("change", e => { appState.status = e.target.valu
 $("#btn-apply-refresh").addEventListener("click", loadApplications);
 
 
+/* ================= AI 助手（流式对话） ================= */
+const chatState = { messages: [], sending: false, sessionTokens: 0 };
+
+async function loadAiView() {
+  try {
+    const st = await api("/api/llm/status");
+    $("#chat-engine").textContent = st.enabled
+      ? `当前引擎：${st.mode === "api" ? "外部 API（" + (st.api_model || "") + "）" : "本地模型（" + (st.model_name || "") + "）"}`
+      : "⚠ AI 引擎未就绪——请到「系统设置」下载模型或配置外部 API";
+  } catch (_) { $("#chat-engine").textContent = ""; }
+}
+
+function appendMsg(role, text) {
+  const wrap = document.createElement("div");
+  wrap.className = `chat-msg ${role}`;
+  wrap.innerHTML = `<span class="cm-avatar">${role === "user" ? "我" : "AI"}</span>
+    <div class="cm-bubble"></div>`;
+  wrap.querySelector(".cm-bubble").textContent = text;
+  const log = $("#chat-log");
+  const welcome = log.querySelector(".chat-welcome");
+  if (welcome) welcome.remove();
+  log.appendChild(wrap);
+  log.scrollTop = log.scrollHeight;
+  return wrap.querySelector(".cm-bubble");
+}
+
+async function sendChat() {
+  const input = $("#chat-input");
+  const text = input.value.trim();
+  if (!text || chatState.sending) return;
+  chatState.sending = true;
+  $("#btn-chat-send").disabled = true;
+  input.value = "";
+  appendMsg("user", text);
+  chatState.messages.push({ role: "user", content: text });
+  const bubble = appendMsg("ai", "");
+  bubble.innerHTML = `<span class="cursor"></span>`;
+  let acc = "";
+  try {
+    const token = sessionStorage.getItem("th_token");
+    const resp = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ messages: [{ role: "system", content: "你是 TalentHub 企业人才库的 AI 助手，帮助 HR 处理招聘相关工作。回答简洁、专业、友好。" }, ...chatState.messages.slice(-16)] }),
+    });
+    if (resp.status === 401) { sessionStorage.removeItem("th_token"); showLockScreen(); throw new Error("已锁定"); }
+    if (!resp.ok) {
+      let detail = `HTTP ${resp.status}`;
+      try { detail = (await resp.json()).detail || detail; } catch (_) {}
+      throw new Error(detail);
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split("\n\n");
+      buf = parts.pop();
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith("data:")) continue;
+        let obj;
+        try { obj = JSON.parse(line.slice(5).trim()); } catch (_) { continue; }
+        if (obj.delta) { acc += obj.delta; bubble.textContent = acc; $("#chat-log").scrollTop = $("#chat-log").scrollHeight; }
+        else if (obj.usage) {
+          const u = obj.usage;
+          const n = (u.total_tokens || ((u.prompt_tokens || 0) + (u.completion_tokens || 0)));
+          chatState.sessionTokens += n;
+          $("#chat-usage").textContent = `本次 ${n} tokens${u.estimated ? "（估算）" : ""} · 会话累计 ${chatState.sessionTokens}`;
+        }
+        else if (obj.error) { bubble.classList.add("err"); bubble.textContent = `⚠ ${obj.error}`; }
+      }
+    }
+    if (acc) chatState.messages.push({ role: "assistant", content: acc });
+  } catch (e) {
+    bubble.classList.add("err");
+    bubble.textContent = `⚠ ${e.message}`;
+    chatState.messages.pop();   // 失败的用户消息保留在输入历史外，回退上下文
+  } finally {
+    chatState.sending = false;
+    $("#btn-chat-send").disabled = false;
+    $("#chat-input").focus();
+  }
+}
+$("#btn-chat-send").addEventListener("click", sendChat);
+$("#chat-input").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+$("#btn-chat-clear").addEventListener("click", () => {
+  chatState.messages = []; chatState.sessionTokens = 0;
+  $("#chat-usage").textContent = "";
+  $("#chat-log").innerHTML = `<div class="chat-welcome"><p>👋 对话已清空，随时开始新话题。</p></div>`;
+});
+
 /* ================= 导入中心 ================= */
 $$(".tab").forEach(tab => tab.addEventListener("click", () => {
   $$(".tab").forEach(t => t.classList.toggle("active", t === tab));
@@ -999,8 +1097,10 @@ async function loadSettings() {
       ${esc(cr.notice || "")}<br>
       联系：📞 ${esc(cr.phone || "")} · ✉️ <a href="mailto:${esc(cr.email || "")}">${esc(cr.email || "")}</a><br>
       商业使用请先书面申请授权。版本 v${esc(sys.version)}`;
-    /* 锁屏面板 */
+    /* 锁屏面板 + 审计 + token 用量 */
     loadLockPanel();
+    loadLockAudit();
+    loadUsage();
     /* AI 面板 */
     await loadAiPanel(cfg, sys);
   } catch (e) { toast(e.message, "err", "设置加载失败"); }
@@ -1058,18 +1158,41 @@ $("#btn-lock-disable").addEventListener("click", async () => {
 });
 
 /* ---- 锁屏覆盖层 + 自动锁定 ---- */
+function startFreezeCountdown(sec) {
+  const errEl = $("#lock-err"), input = $("#lock-pass"), btn = $("#lock-unlock");
+  let left = sec;
+  input.disabled = btn.disabled = true;
+  if (freezeTimer) clearInterval(freezeTimer);
+  const tick = () => {
+    errEl.textContent = `⚠ 密码错误次数过多，已冻结保护。请 ${left} 秒后再试（本次尝试已记录来源地址）`;
+    if (left <= 0) {
+      clearInterval(freezeTimer); freezeTimer = null;
+      input.disabled = btn.disabled = false;
+      errEl.textContent = ""; input.value = "";
+    }
+    left--;
+  };
+  tick();
+  freezeTimer = setInterval(tick, 1000);
+}
+
 function showLockScreen() {
   $("#lock-screen").hidden = false;
   $("#lock-err").textContent = "";
   $("#lock-pass").value = "";
   setTimeout(() => $("#lock-pass").focus(), 60);
 }
+let freezeTimer = null;
 async function doUnlock() {
   const p = $("#lock-pass").value;
   if (!p) { $("#lock-err").textContent = "请输入密码"; return; }
   try {
     const r = await fetch("/api/auth/unlock", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: p }) });
     const body = await r.json();
+    if (r.status === 429) {   // 防破解冻结：倒计时提示，期间禁用输入
+      startFreezeCountdown(body.retry_after || 60);
+      return;
+    }
     if (!r.ok) { $("#lock-err").textContent = body.detail || "解锁失败"; return; }
     sessionStorage.setItem("th_token", body.token);
     $("#lock-screen").hidden = true;
@@ -1262,6 +1385,97 @@ $("#btn-dl-model").addEventListener("click", async () => {
   finally { btn.disabled = false; }
 });
 
+/* ---- 自定义链接下载（多线程分段由后端自动启用） ---- */
+$("#btn-dl-url").addEventListener("click", async () => {
+  const url = $("#dl-custom-url").value.trim();
+  if (!/^https?:\/\//.test(url)) { toast("请粘贴 http(s) 的 GGUF 直链", "warn"); return; }
+  const btn = $("#btn-dl-url");
+  btn.disabled = true;
+  try {
+    await api("/api/llm/download-url", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
+    toast("开始下载（支持分段时自动 4 线程加速），大文件需数分钟");
+    $("#dl-progress").hidden = false;
+    stopDlPoll();
+    dlTimer = setInterval(async () => {
+      try { renderDlProgress(await api("/api/llm/download")); }
+      catch (_) { stopDlPoll(); }
+    }, 1500);
+  } catch (e) { toast(e.message, "err", "链接下载失败"); }
+  finally { btn.disabled = false; }
+});
+
+/* ---- 导入本地模型文件（流式上传，大文件耐心等） ---- */
+$("#file-model").addEventListener("change", async e => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  if (!f.name.toLowerCase().endsWith(".gguf")) { toast("请选择 .gguf 模型文件", "err"); return; }
+  const ok = await confirmBox("导入模型", `将导入 <b>${esc(f.name)}</b>（${(f.size / 1073741824).toFixed(2)}GB）到模型目录，大文件上传需要一些时间。继续？`, "开始导入");
+  if (!ok) return;
+  const fd = new FormData();
+  fd.append("up", f);
+  toast("上传中…请勿关闭页面", "warn");
+  try {
+    const token = sessionStorage.getItem("th_token");
+    const resp = await fetch("/api/llm/import", { method: "POST", body: fd, headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const r = await resp.json();
+    if (!resp.ok) throw new Error(r.detail || `HTTP ${resp.status}`);
+    toast(`模型已导入：${r.file}（${r.size_mb}MB），下次解析自动可用`);
+    loadModelPanel();
+  } catch (err) { toast(err.message, "err", "导入失败"); }
+});
+
+/* ---- 外部 API：自动拉取模型列表 ---- */
+$("#btn-fetch-models").addEventListener("click", async () => {
+  const btn = $("#btn-fetch-models");
+  const hint = $("#api-models-hint");
+  btn.disabled = true; hint.textContent = "拉取中…";
+  try {
+    const base = $("#api-base").value.trim();
+    const key = $("#api-key").value.trim();
+    if (!base) throw new Error("请先填写 API 地址");
+    const qs = new URLSearchParams({ base, use_saved: key && key !== "******" ? "0" : "1" });
+    if (key && key !== "******") qs.set("key", key);
+    const r = await api(`/api/llm/api-models?${qs}`);
+    const dl = $("#api-model-list");
+    dl.innerHTML = r.models.map(m => `<option value="${esc(m)}">`).join("");
+    hint.innerHTML = `✓ 获取到 <b>${r.models.length}</b> 个模型：${r.models.slice(0, 8).map(esc).join("、")}${r.models.length > 8 ? " …" : ""}（在「模型名」输入框聚焦可见下拉建议，也可直接手填）`;
+    if (r.models.length && !$("#api-model").value) $("#api-model").value = r.models[0];
+  } catch (e) { hint.textContent = ""; toast(e.message, "err", "拉取模型列表失败"); }
+  finally { btn.disabled = false; }
+});
+
+/* ---- token 用量统计 ---- */
+async function loadUsage() {
+  try {
+    const r = await api("/api/llm/usage");
+    const t = r.total;
+    $("#usage-box").innerHTML = t.calls === 0 ? "暂无 AI 调用记录。简历 AI 增强与 AI 助手对话都会在这里累计 token 用量。" : `
+      累计调用 <b>${t.calls}</b> 次 · prompt <b>${(t.prompt_tokens / 1000).toFixed(1)}k</b> + completion <b>${(t.completion_tokens / 1000).toFixed(1)}k</b> = <b>${(t.total_tokens / 1000).toFixed(1)}k tokens</b> · 平均耗时 ${(t.avg_elapsed_ms / 1000).toFixed(1)}s<br>
+      按引擎：${r.by_engine.map(x => `${esc(x.engine)} ${x.calls}次/${(x.tokens / 1000).toFixed(1)}k`).join(" · ") || "—"}<br>
+      按场景：${r.by_scene.map(x => `${x.scene === "chat" ? "对话" : "简历解析"} ${x.calls}次/${(x.tokens / 1000).toFixed(1)}k`).join(" · ") || "—"}`;
+    $("#usage-detail").innerHTML = r.recent.length ? `<table class="data-table"><thead>
+      <tr><th>时间</th><th>引擎</th><th>模型</th><th>场景</th><th class="num">tokens</th><th class="num">耗时</th></tr></thead><tbody>
+      ${r.recent.map(x => `<tr><td class="muted" style="font-size:11.5px">${esc(x.time)}</td>
+        <td>${esc(x.engine)}</td><td class="muted" style="font-size:11.5px;max-width:180px;overflow:hidden;text-overflow:ellipsis">${esc(x.model)}</td>
+        <td>${x.scene === "chat" ? "对话" : "简历解析"}</td>
+        <td class="num">${(x.total_tokens / 1000).toFixed(1)}k</td><td class="num">${(x.elapsed_ms / 1000).toFixed(1)}s</td></tr>`).join("")}
+      </tbody></table>` : "";
+  } catch (_) { $("#usage-box").textContent = "用量加载失败"; }
+}
+$("#btn-usage-refresh").addEventListener("click", loadUsage);
+
+/* ---- 锁屏审计（失败警告 + IP） ---- */
+async function loadLockAudit() {
+  try {
+    const r = await api("/api/auth/audit");
+    const zone = $("#lock-audit-zone");
+    if (!r.items.length) { zone.hidden = true; return; }
+    zone.hidden = false;
+    $("#lock-audit").innerHTML = r.items.slice(0, 20).map(x =>
+      `${x.ok ? "✅" : "⚠️"} <code>${esc(x.time)}</code> ${esc(x.ip || "本机")} ${esc(x.detail || "")}`).join("<br>");
+  } catch (_) { /* 未启用锁时 401/404 静默 */ }
+}
+
 $("#btn-save-settings").addEventListener("click", saveSettings);
 $("#btn-restart").addEventListener("click", async () => {
   await saveSettings(true);
@@ -1344,10 +1558,31 @@ async function refreshStatuses() {
   $("#batch-status").innerHTML = opts;
 }
 
+async function refreshSkillOptions() {
+  try {
+    const st = await api("/api/stats");
+    const skills = (st.top_skills || []).map(x => x.name);
+    const sel = $("#f-skill");
+    const cur = sel.value;
+    sel.innerHTML = `<option value="">全部技能</option>` + skills.map(k => `<option>${esc(k)}</option>`).join("");
+    sel.value = skills.includes(cur) ? cur : "";
+  } catch (_) { /* 锁定或空库时静默 */ }
+}
+
 async function initShell() {
   /* 下拉初始化（状态列表动态拉取，支持自定义状态） */
   await refreshStatuses();
   $("#f-edu").insertAdjacentHTML("beforeend", EDU_OPTIONS.map(s => `<option>${s}</option>`).join(""));
+  refreshSkillOptions();
+  /* 版权小眼睛：显隐状态存 localStorage */
+  const crEl = $("#sidebar-copyright"), eyeBtn = $("#btn-cr-eye");
+  if (localStorage.getItem("th_cr_hidden") === "1") { crEl.classList.add("cr-hidden"); eyeBtn.textContent = "👁‍🗨"; }
+  eyeBtn.addEventListener("click", () => {
+    const hidden = crEl.classList.toggle("cr-hidden");
+    eyeBtn.textContent = hidden ? "👁‍🗨" : "👁";
+    eyeBtn.title = hidden ? "显示版权信息" : "隐藏版权信息";
+    localStorage.setItem("th_cr_hidden", hidden ? "1" : "0");
+  });
   try {
     const [sys, about] = await Promise.all([api("/api/system"), api("/api/about")]);
     $("#server-text").textContent = `服务运行中 v${sys.version}`;

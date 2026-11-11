@@ -26,6 +26,9 @@
       <a href="#/applications" data-view="applications" class="nav-item">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2 2 4-4"/></svg>
         <span class="nav-label">投递审核</span><span id="nav-app-badge" class="nav-badge" hidden></span></a>
+      <a href="#/ai" data-view="ai" class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><circle cx="9" cy="10" r=".6" fill="currentColor"/><circle cx="15" cy="10" r=".6" fill="currentColor"/></svg>
+        <span class="nav-label">AI 助手</span></a>
       <a href="#/import" data-view="import" class="nav-item">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
         <span class="nav-label">导入中心</span></a>
@@ -40,6 +43,7 @@
       <div id="server-dot" class="server-line"><span class="dot"></span><span id="server-text">连接中…</span></div>
       <div id="sidebar-port" class="port-line"></div>
       <div class="copyright-line" id="sidebar-copyright"></div>
+      <button id="btn-cr-eye" class="cr-eye" title="隐藏/显示版权信息" aria-label="切换版权信息可见性">👁</button>
     </div>
   </aside>
 
@@ -110,6 +114,7 @@
                 <option value="B">B 良好</option><option value="C">C 一般</option>
                 <option value="D">D 暂缓</option><option value="_none">未评级</option></select>
               <select id="f-edu" aria-label="按学历筛选"><option value="">全部学历</option></select>
+              <select id="f-skill" aria-label="按技能筛选"><option value="">全部技能</option></select>
               <select id="f-sort" aria-label="排序方式">
                 <option value="created_at:desc">最新添加</option>
                 <option value="created_at:asc">最早添加</option>
@@ -184,6 +189,31 @@
             </div>
           </div>
           <div id="app-pager" class="pager"></div>
+        </div>
+      </section>
+
+      <!-- AI 助手 -->
+      <section id="view-ai" class="view" hidden>
+        <div class="card chat-card">
+          <div class="card-head">
+            <h3>AI 助手 <span id="chat-engine" class="unit"></span></h3>
+            <div class="draft-actions">
+              <span id="chat-usage" class="muted"></span>
+              <button id="btn-chat-clear" class="btn btn-sm btn-ghost">清空对话</button>
+            </div>
+          </div>
+          <div id="chat-log" class="chat-log">
+            <div class="chat-welcome">
+              <p>👋 你好，我是 TalentHub AI 助手。</p>
+              <p class="muted">当前引擎（本地小模型 / 外部 API）在「系统设置 → AI 智能解析引擎」切换。
+              可以帮你：改写招聘 JD、生成面试问题、润色跟进话术、总结候选人亮点、回答 HR 常见问题。</p>
+            </div>
+          </div>
+          <div class="chat-input-row">
+            <textarea id="chat-input" rows="2" placeholder="输入消息，Enter 发送，Shift+Enter 换行…"></textarea>
+            <button id="btn-chat-send" class="btn btn-primary">发送</button>
+          </div>
+          <p class="hint">本地引擎完全离线；外部 API 引擎会将对话内容发送到你配置的服务商。每次对话的 token 消耗显示在右上角，并计入「系统设置 → token 用量」。</p>
         </div>
       </section>
 
@@ -427,6 +457,10 @@
                 </div>
               </div>
               <p class="hint" id="lock-forgot-hint"></p>
+              <div id="lock-audit-zone" hidden style="margin-top:12px">
+                <div class="card-head"><h3 style="font-size:13.5px">最近解锁尝试（含失败警告与来源 IP）</h3></div>
+                <div id="lock-audit" class="db-info" style="max-height:180px;overflow-y:auto"></div>
+              </div>
             </div>
           </div>
 
@@ -465,8 +499,11 @@
                 </div>
                 <div class="form-row">
                   <label class="form-label" for="api-model">模型名</label>
-                  <input id="api-model" name="llm_api_model" class="input" style="flex:1" placeholder="deepseek-chat / gpt-4o-mini / qwen-plus">
+                  <input id="api-model" name="llm_api_model" class="input" style="flex:1" placeholder="deepseek-chat / gpt-4o-mini / qwen-plus" list="api-model-list">
+                  <datalist id="api-model-list"></datalist>
+                  <button type="button" id="btn-fetch-models" class="btn btn-sm btn-ghost" title="从 API 服务自动获取可用模型列表">⟳ 拉取模型列表</button>
                 </div>
+                <div id="api-models-hint" class="muted" style="font-size:12px"></div>
                 <div class="form-row"><label class="check-line">
                   <input type="checkbox" name="llm_enabled_api"> 启用 AI 增强解析（外部 API 引擎）</label></div>
               </div>
@@ -486,11 +523,23 @@
             <select id="dl-source" aria-label="选择下载源站"></select>
             <button id="btn-dl-model" class="btn btn-primary">开始下载</button>
           </div>
+          <div class="model-row">
+            <input id="dl-custom-url" class="input" style="flex:1;min-width:260px" placeholder="或粘贴任意 GGUF 直链下载（自动 4 线程加速）https://…/model.gguf">
+            <button id="btn-dl-url" class="btn btn-ghost">链接下载</button>
+            <label class="like-btn btn btn-ghost">导入本地模型文件<input id="file-model" type="file" accept=".gguf" hidden></label>
+          </div>
           <div id="dl-progress" class="dl-progress" hidden>
             <div class="dl-bar"><i id="dl-bar-fill"></i></div>
             <span id="dl-text" class="muted"></span>
           </div>
-          <p class="hint">国内网络推荐 hf-mirror / ModelScope 源；HuggingFace 官方源需国际网络。下载完成后无需重启，下一次简历导入自动启用 AI 增强。内存/GPU 建议见上方蓝色提示条。</p>
+          <p class="hint">国内网络推荐 hf-mirror / ModelScope 源；HuggingFace 官方源需国际网络；「链接下载」支持任意 GGUF 直链（服务器支持分段时自动 4 线程并发加速）；「导入本地模型」校验 GGUF 魔数后落盘。下载/导入完成后无需重启，自动选用最大模型。内存/GPU 建议见上方蓝色提示条。</p>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>📈 AI token 用量</h3>
+            <button id="btn-usage-refresh" class="btn btn-sm btn-ghost">刷新</button></div>
+          <div id="usage-box" class="db-info">加载中…</div>
+          <div id="usage-detail" class="table-wrap" style="margin-top:10px;max-height:260px;overflow-y:auto"></div>
         </div>
       </section>
     </main>

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -154,6 +155,8 @@ def _extract_api(text: str, max_input_chars: int = 6000) -> Optional[dict]:
         raw = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as e:
         raise RuntimeError(f"API 响应结构异常: {str(data)[:200]}") from e
+    global _last_api_usage
+    _last_api_usage = data.get("usage") or {}   # token 用量供 extract() 统一落库
     obj = _extract_json(raw)
     return _normalize(obj) if obj else None
 
@@ -280,20 +283,172 @@ def _normalize(obj: dict) -> dict:
 
 def extract(text: str, max_input_chars: int = 3500) -> Optional[dict]:
     """AI 抽取主入口：按配置分发 本地GGUF / 外部API 引擎。
-    返回规范化字段 dict；任何失败返回 None（主流程回退规则结果）。"""
+    返回规范化字段 dict；任何失败返回 None（主流程回退规则结果）。
+    每次调用自动记录 token 用量（ai_usage 表）。"""
     if not text or not text.strip():
         return None
-    if config.get().get("llm_engine") == "api":
-        return _extract_api(text, max_input_chars=6000)  # 联网大模型上下文宽裕，多给文本
+    t0 = time.time()
+    cfg = config.get()
+    if cfg.get("llm_engine") == "api":
+        obj = _extract_api(text, max_input_chars=6000)  # 联网大模型上下文宽裕，多给文本
+        _record_usage("api", cfg.get("llm_api_model", ""), "resume_parse",
+                      _last_api_usage, time.time() - t0)
+        return obj
     llm = _get_llm()
     prompt = PROMPT_TEMPLATE.format(text=text[:max_input_chars])
     with _lock:
-        resp = llm(prompt, max_tokens=900, temperature=0.1, stop=["</s>", "\n\n\n"])
+        resp = llm(prompt, max_tokens=900, temperature=0.1, stop=["</s", "\n\n\n"])
+    usage = (resp or {}).get("usage") or {}
+    _record_usage("local", Path(_loaded_path or "").name, "resume_parse",
+                  usage, time.time() - t0)
     raw = resp["choices"][0]["text"] if resp.get("choices") else ""
     obj = _extract_json(raw)
     if not obj:
         return None
     return _normalize(obj)
+
+
+# ---------- token 用量记录 ----------
+_last_api_usage: dict = {}   # 最近一次 API 调用的 usage（_extract_api 内填充）
+
+
+def _record_usage(engine: str, model: str, scene: str, usage: dict, elapsed_s: float):
+    """统一 token 用量落库；统计失败绝不影响主流程。"""
+    try:
+        from .. import db
+        u = usage or {}
+        pt = int(u.get("prompt_tokens") or u.get("prompt") or 0)
+        ct = int(u.get("completion_tokens") or u.get("completion") or 0)
+        db.record_ai_usage(engine, model or "-", scene, pt, ct, int(elapsed_s * 1000))
+    except Exception:
+        pass
+
+
+# ---------- AI 对话（内置模型 + 外部 API 均可聊） ----------
+
+def chat_stream(messages: list[dict]):
+    """流式对话生成器：yield ("delta", 文本增量) / ("usage", dict) / ("error", msg)。
+    messages 为 OpenAI 格式 [{role, content}]；按配置走本地 GGUF 或外部 API。"""
+    t0 = time.time()
+    if config.get().get("llm_engine") == "api":
+        yield from _chat_stream_api(messages)
+    else:
+        yield from _chat_stream_local(messages, t0)
+
+
+def _chat_stream_local(messages: list, t0: float):
+    try:
+        llm = _get_llm()
+    except Exception as e:
+        yield ("error", str(e))
+        return
+    full = ""
+    usage: dict = {}
+    try:
+        stream = llm.create_chat_completion(
+            messages=messages, max_tokens=1024, temperature=0.7, stream=True)
+        for chunk in stream:
+            try:
+                delta = (chunk.get("choices") or [{}])[0].get("delta", {}).get("content") or ""
+            except (AttributeError, IndexError):
+                delta = ""
+            if chunk.get("usage"):
+                usage = chunk["usage"]
+            if delta:
+                full += delta
+                yield ("delta", delta)
+    except Exception as e:
+        yield ("error", f"{type(e).__name__}: {e}")
+        return
+    if not usage:
+        # 流式无 usage 时按字符估算（中文约 0.75 token/字），量级正确供参考
+        prompt_chars = sum(len(str(m.get("content", ""))) for m in messages)
+        usage = {"prompt_tokens": max(1, int(prompt_chars * 0.75)),
+                 "completion_tokens": max(1, int(len(full) * 0.75)),
+                 "estimated": True}
+    _record_usage("local", Path(_loaded_path or "").name, "chat", usage, time.time() - t0)
+    yield ("usage", usage)
+
+
+def _chat_stream_api(messages: list):
+    import urllib.error
+    import urllib.request
+    cfg = config.get()
+    base = (cfg.get("llm_api_base") or "").strip().rstrip("/")
+    if not base or not (cfg.get("llm_api_key") or "").strip():
+        yield ("error", "外部 API 未配置完整（地址/Key），请在设置页填写或切回本地引擎")
+        return
+    t0 = time.time()
+    payload = json.dumps({
+        "model": cfg.get("llm_api_model", "").strip(),
+        "messages": messages,
+        "temperature": 0.7,
+        "max_tokens": 2048,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }).encode("utf-8")
+    req = urllib.request.Request(f"{base}/chat/completions", data=payload, method="POST", headers={
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {(cfg.get('llm_api_key') or '').strip()}",
+        "Accept": "text/event-stream",
+    })
+    usage: dict = {}
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            for raw_line in resp:
+                line = raw_line.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if obj.get("usage"):
+                    usage = obj["usage"]
+                choices = obj.get("choices") or []
+                if choices:
+                    delta = (choices[0].get("delta") or {}).get("content") or ""
+                    if delta:
+                        yield ("delta", delta)
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode()[:200]
+        except Exception:
+            pass
+        yield ("error", f"API HTTP {e.code}: {body}")
+        return
+    except Exception as e:
+        yield ("error", f"{type(e).__name__}: {e}")
+        return
+    _record_usage("api", cfg.get("llm_api_model", ""), "chat", usage, time.time() - t0)
+    if usage:
+        yield ("usage", usage)
+
+
+def fetch_api_models(base: str, key: str) -> list[str]:
+    """拉取外部 OpenAI 兼容服务的模型列表（GET {base}/models），供设置页下拉选择。"""
+    import urllib.error
+    import urllib.request
+    base = (base or "").strip().rstrip("/")
+    if not re.match(r"^https?://", base):
+        raise ValueError("API 地址需以 http:// 或 https:// 开头")
+    req = urllib.request.Request(f"{base}/models", headers={
+        "Authorization": f"Bearer {(key or '').strip()}"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise ValueError(f"获取模型列表失败 HTTP {e.code}（检查 API 地址与 Key）") from e
+    except Exception as e:
+        raise ValueError(f"获取模型列表失败: {type(e).__name__}: {e}") from e
+    items = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        raise ValueError("响应结构异常：应为 {data: [{id: ...}]}")
+    return sorted({str(i.get("id")) for i in items if isinstance(i, dict) and i.get("id")})[:300]
 
 
 def enhance(text: str, rule_result: dict) -> tuple[dict, bool]:

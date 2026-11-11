@@ -306,6 +306,66 @@ def main():
     lst = s.get(f"{BASE}/api/applications", timeout=10).json()
     check("管理端投递列表结构", "items" in lst and "pending" in lst and "total" in lst)
 
+    print("== 19. v1.3：AI 对话 / token 用量 / 模型下载扩展 / 锁屏防破解 / 备注搜索 ==")
+    # token 用量结构
+    r = s.get(f"{BASE}/api/llm/usage", timeout=10).json()
+    check("usage 结构完整", all(k in r for k in ("total", "by_engine", "by_scene", "by_model", "recent")))
+    # AI 对话（本地模型 SSE 流式，真实推理）
+    import json as _json
+    resp = s.post(f"{BASE}/api/chat", stream=True, timeout=300,
+                  json={"messages": [{"role": "user", "content": "回复OK两个字母即可"}]})
+    if resp.status_code == 200:
+        deltas, got_usage, got_done = 0, False, False
+        for line in resp.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data:"):
+                continue
+            obj = _json.loads(line[5:].strip())
+            if "delta" in obj: deltas += 1
+            elif "usage" in obj: got_usage = True
+            elif obj.get("done"): got_done = True
+        check("AI 对话流式返回", deltas > 0 and got_done, f"deltas={deltas}")
+        check("对话 usage 事件", got_usage)
+        r = s.get(f"{BASE}/api/llm/usage", timeout=10).json()
+        chat_rows = [x for x in r["recent"] if x["scene"] == "chat"]
+        check("对话 token 已落库", bool(chat_rows) and chat_rows[0]["total_tokens"] > 0)
+    else:
+        check("AI 对话端点可用(503=引擎未就绪属预期)", resp.status_code == 503, str(resp.status_code))
+        check("对话 usage 事件(跳过)", True)
+        check("对话 token 已落库(跳过)", True)
+    # 自定义链接下载校验
+    r = s.post(f"{BASE}/api/llm/download-url", json={"url": "ftp://bad/x.gguf"}, timeout=10)
+    check("非 http 链接被拒", r.status_code == 400)
+    r = s.post(f"{BASE}/api/llm/download-url", json={"url": "http://127.0.0.1:9/x.gguf"}, timeout=30)
+    check("不可达链接 HEAD 预检拒绝", r.status_code == 400)
+    # 模型导入魔数校验
+    r = s.post(f"{BASE}/api/llm/import", files={"up": ("fake.gguf", b"BAAD" * 100)}, timeout=10)
+    check("非 GGUF 导入被拒", r.status_code == 400 and "GGUF" in r.json()["detail"])
+    # api-models 代理错误路径
+    r = s.get(f"{BASE}/api/llm/api-models", params={"base": "http://127.0.0.1:9", "use_saved": 0}, timeout=30)
+    check("api-models 不可达 400", r.status_code == 400)
+    r = s.get(f"{BASE}/api/llm/api-models", params={"base": "not-a-url", "use_saved": 0}, timeout=10)
+    check("api-models 非法地址 400", r.status_code == 400)
+    # 模型目录 ≥11 档
+    r = s.get(f"{BASE}/api/llm/models", timeout=10).json()
+    check("模型目录 ≥11 档", len([m for m in r["models"] if m.get("urls")]) >= 11, str(len(r["models"])))
+    # 备注可搜索
+    first = s.get(f"{BASE}/api/talents", timeout=10).json()["items"][0]
+    s.post(f"{BASE}/api/talents/{first['id']}/notes", json={"text": "e2e独特备注词ZZQQ"}, timeout=10)
+    r = s.get(f"{BASE}/api/talents", params={"q": "e2e独特备注词ZZQQ"}, timeout=10).json()
+    check("备注内容纳入全文搜索", r["total"] == 1 and r["items"][0]["id"] == first["id"])
+    # 技能筛选
+    r = s.get(f"{BASE}/api/talents", params={"skill": "Java"}, timeout=10).json()
+    check("技能筛选参数生效", r["total"] >= 1 and all("Java" in (x["skills"] or "") for x in r["items"]))
+    # 锁屏防破解（5 错冻结 + 审计带 IP）
+    s.post(f"{BASE}/api/auth/setup", json={"password": "e2efreeze1", "auto_lock_minutes": 0}, timeout=10)
+    codes = [s.post(f"{BASE}/api/auth/unlock", json={"password": f"w{i}"}, timeout=10).status_code for i in range(6)]
+    check("5 次错误后冻结(429)", codes == [403] * 5 + [429], str(codes))
+    rr = s.post(f"{BASE}/api/auth/unlock", json={"password": "e2efreeze1"}, timeout=10)
+    check("冻结期正确密码也拒 + retry_after", rr.status_code == 429 and rr.json().get("retry_after", 0) > 0)
+    au = s.get(f"{BASE}/api/auth/audit", timeout=10).json()
+    fails = [x for x in au["items"] if x["ok"] == 0]
+    check("审计记录失败尝试含 IP", len(fails) >= 6 and all(x["ip"] for x in fails))
+
     print(f"\n全部通过：{len(PASSED)} 项断言 ✓")
 
 

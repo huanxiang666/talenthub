@@ -74,7 +74,40 @@ CREATE TABLE IF NOT EXISTS applications (
 );
 CREATE INDEX IF NOT EXISTS idx_applications_phone ON applications(phone);
 CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status);
+
+CREATE TABLE IF NOT EXISTS ai_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    time TEXT DEFAULT '',
+    engine TEXT DEFAULT '',          -- local | api
+    model TEXT DEFAULT '',           -- 模型名（本地文件名或 API 模型名）
+    scene TEXT DEFAULT '',           -- resume_parse | chat | test
+    prompt_tokens INTEGER DEFAULT 0,
+    completion_tokens INTEGER DEFAULT 0,
+    total_tokens INTEGER DEFAULT 0,
+    elapsed_ms INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS lock_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    time TEXT DEFAULT '',
+    ip TEXT DEFAULT '',
+    ok INTEGER DEFAULT 0,            -- 0=失败 1=成功
+    detail TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_lock_attempts_time ON lock_attempts(time);
 """
+
+# 性能索引（万级数据筛选/排序不卡）：覆盖常用筛选列与排序列
+PERF_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_talents_rating ON talents(rating)",
+    "CREATE INDEX IF NOT EXISTS idx_talents_education ON talents(education)",
+    "CREATE INDEX IF NOT EXISTS idx_talents_created ON talents(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_talents_work_years ON talents(work_years)",
+    "CREATE INDEX IF NOT EXISTS idx_talents_graduate_year ON talents(graduate_year)",
+    "CREATE INDEX IF NOT EXISTS idx_talents_skills ON talents(skills)",
+    "CREATE INDEX IF NOT EXISTS idx_talents_tags ON talents(tags)",
+    "CREATE INDEX IF NOT EXISTS idx_events_id_desc ON events(id DESC)",
+]
 
 # 增量迁移列（老库 ALTER TABLE 补列；已存在时忽略 Duplicate column 错误）
 MIGRATE_COLUMNS = [
@@ -154,6 +187,31 @@ def init_db() -> None:
                     raise
         # 幂等迁移：存量邮箱归一为小写（去重键大小写不敏感的前提，2026-11 复核阻断项#1）
         conn.execute("UPDATE talents SET email = lower(email) WHERE email <> lower(email)")
+        # 性能索引（万级数据筛选/排序）
+        for stmt in PERF_INDEXES:
+            conn.execute(stmt)
+
+
+def record_ai_usage(engine: str, model: str, scene: str,
+                    prompt_tokens: int, completion_tokens: int, elapsed_ms: int) -> None:
+    """记录一次 AI 调用的 token 用量（本地/外部引擎统一入口）。"""
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO ai_usage(time, engine, model, scene, prompt_tokens, completion_tokens, total_tokens, elapsed_ms) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (now(), engine, model[:80], scene[:20], int(prompt_tokens or 0),
+             int(completion_tokens or 0), int(prompt_tokens or 0) + int(completion_tokens or 0),
+             int(elapsed_ms or 0)))
+
+
+def record_lock_attempt(ip: str, ok: bool, detail: str = "") -> None:
+    """锁屏尝试审计（成功/失败都记，含来源 IP）。"""
+    with db() as conn:
+        conn.execute("INSERT INTO lock_attempts(time, ip, ok, detail) VALUES(?,?,?,?)",
+                     (now(), ip[:45], 1 if ok else 0, detail[:200]))
+        # 审计表同样裁剪，保留最近 1000 条
+        conn.execute("DELETE FROM lock_attempts WHERE id NOT IN "
+                     "(SELECT id FROM lock_attempts ORDER BY id DESC LIMIT 1000)")
 
 
 MAX_EVENTS = 500  # 事件日志裁剪上限，防长期运行无限膨胀

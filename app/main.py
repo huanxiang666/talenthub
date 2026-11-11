@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Query, Request, UploadFile, File
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -152,11 +152,22 @@ def auth_setup(body: LockSetupIn):
 
 
 @app.post("/api/auth/unlock")
-def auth_unlock(body: PasswordIn):
+def auth_unlock(body: PasswordIn, request: Request):
+    ip = request.client.host if request.client else ""
     try:
-        return lock_auth.unlock(body.password)
-    except PermissionError:
-        _err("密码错误", 403)
+        return lock_auth.unlock(body.password, ip)
+    except lock_auth.FrozenError as e:
+        # 防破解：连续 5 次错误密码冻结 60 秒（429 + 剩余秒数，前端倒计时）
+        return JSONResponse(status_code=429,
+                            content={"detail": str(e), "retry_after": e.retry_after})
+    except PermissionError as e:
+        return JSONResponse(status_code=403, content={"detail": str(e)})
+
+
+@app.get("/api/auth/audit")
+def auth_audit(limit: int = Query(50, ge=1, le=200)):
+    """锁屏尝试审计（含失败警告与来源 IP，设置页展示）。"""
+    return {"items": lock_auth.lock_audit(limit)}
 
 
 @app.post("/api/auth/change")
@@ -351,6 +362,100 @@ def llm_download(body: DownloadIn):
 @app.get("/api/llm/download")
 def llm_download_progress():
     return model_hub.progress()
+
+
+class DownloadUrlIn(BaseModel):
+    url: str
+    filename: str = ""
+
+
+@app.post("/api/llm/download-url")
+def llm_download_url(body: DownloadUrlIn):
+    """自定义链接下载 GGUF 模型（服务器支持 Range 时自动 4 线程分段加速）。"""
+    try:
+        return model_hub.start_download_url(body.url, body.filename)
+    except ValueError as e:
+        _err(str(e))
+
+
+@app.post("/api/llm/import")
+def llm_import_model(up: UploadFile = File(...)):
+    """本地导入 GGUF 模型（流式写盘 + 魔数校验，落盘 data/models/）。"""
+    try:
+        r = model_hub.import_model_stream(up.filename or "", up.file)
+    except ValueError as e:
+        _err(str(e))
+    db.log_event("model_import", f"导入模型 {r['file']}（{r['size_mb']}MB）")
+    return r
+
+
+@app.get("/api/llm/api-models")
+def llm_api_models(base: str = "", key: str = "", use_saved: int = 1):
+    """自动获取外部 API 服务的模型列表（代理请求避免浏览器 CORS）。
+    use_saved=1 且未传 base/key 时用已保存配置。"""
+    cfg = config.get()
+    b = base.strip() or (cfg.get("llm_api_base") if use_saved else "")
+    k = key.strip() or (cfg.get("llm_api_key") if use_saved else "")
+    if k == "******":
+        k = cfg.get("llm_api_key", "")   # 前端回传掩码时换真实 Key
+    try:
+        return {"models": llm_parser.fetch_api_models(b, k)}
+    except ValueError as e:
+        _err(str(e))
+
+
+@app.get("/api/llm/usage")
+def llm_usage(days: int = Query(30, ge=1, le=365)):
+    """token 用量统计：总量 + 按引擎/场景/模型分组 + 最近明细。"""
+    with db.db() as conn:
+        total = conn.execute(
+            "SELECT COUNT(*) calls, COALESCE(SUM(prompt_tokens),0) pt, "
+            "COALESCE(SUM(completion_tokens),0) ct, COALESCE(SUM(total_tokens),0) tt, "
+            "COALESCE(AVG(elapsed_ms),0) avg_ms FROM ai_usage").fetchone()
+        by_engine = [dict(r) for r in conn.execute(
+            "SELECT engine, COUNT(*) calls, SUM(total_tokens) tokens FROM ai_usage "
+            "GROUP BY engine ORDER BY tokens DESC").fetchall()]
+        by_scene = [dict(r) for r in conn.execute(
+            "SELECT scene, COUNT(*) calls, SUM(total_tokens) tokens FROM ai_usage "
+            "GROUP BY scene ORDER BY tokens DESC").fetchall()]
+        by_model = [dict(r) for r in conn.execute(
+            "SELECT model, engine, COUNT(*) calls, SUM(total_tokens) tokens FROM ai_usage "
+            "GROUP BY model, engine ORDER BY tokens DESC LIMIT 10").fetchall()]
+        recent = [dict(r) for r in conn.execute(
+            "SELECT time, engine, model, scene, total_tokens, elapsed_ms FROM ai_usage "
+            "ORDER BY id DESC LIMIT 20").fetchall()]
+    return {
+        "total": {"calls": total["calls"], "prompt_tokens": total["pt"],
+                  "completion_tokens": total["ct"], "total_tokens": total["tt"],
+                  "avg_elapsed_ms": round(total["avg_ms"] or 0)},
+        "by_engine": by_engine, "by_scene": by_scene, "by_model": by_model,
+        "recent": recent,
+    }
+
+
+class ChatIn(BaseModel):
+    messages: list[dict]   # OpenAI 格式 [{role, content}]
+
+
+@app.post("/api/chat")
+def ai_chat(body: ChatIn):
+    """AI 助手对话（SSE 流式）：本地 GGUF 或外部 API 引擎，取决于当前配置。"""
+    msgs = [m for m in body.messages[-20:]           # 上下文窗口：最近 20 条
+            if isinstance(m, dict) and m.get("role") in ("user", "assistant", "system")
+            and isinstance(m.get("content"), str) and m.get("content").strip()]
+    if not msgs:
+        _err("没有有效消息")
+    if not llm_parser.status()["enabled"]:
+        _err("AI 引擎未就绪：本地引擎需已下载模型，或切换外部 API 引擎并配置完整", 503)
+
+    def gen():
+        for kind, payload in llm_parser.chat_stream(msgs):
+            yield f"data: {json.dumps({kind: payload}, ensure_ascii=False)}\n\n"
+        yield "data: {\"done\": true}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                               headers={"Cache-Control": "no-cache",
+                                        "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/settings/restart")

@@ -90,11 +90,14 @@ def list_talents(q: str = "", status: str = "", rating: str = "", education: str
     where, params = [], []
     if q:
         like = f"%{q.strip()}%"
+        # notes（跟进备注 JSON 文本）与 project_experience 也纳入全文搜索：
+        # 备注里写的任何关键词（如"二孩""接受出差""薪资可谈"）都能直接搜到人
         where.append("(name LIKE ? OR phone LIKE ? OR email LIKE ? OR skills LIKE ? "
                      "OR current_company LIKE ? OR current_title LIKE ? OR expected_title LIKE ? "
                      "OR school LIKE ? OR major LIKE ? OR city LIKE ? OR tags LIKE ? OR summary LIKE ? "
-                     "OR certificates LIKE ? OR languages LIKE ? OR work_history LIKE ? OR wechat LIKE ?)")
-        params += [like] * 16
+                     "OR certificates LIKE ? OR languages LIKE ? OR work_history LIKE ? OR wechat LIKE ? "
+                     "OR notes LIKE ? OR project_experience LIKE ?)")
+        params += [like] * 18
     if status:
         where.append("status = ?")
         params.append(status)
