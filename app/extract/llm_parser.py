@@ -86,10 +86,12 @@ def _get_llm():
             raise RuntimeError(_load_error)
         try:
             import os
+            gpu_layers = int(config.get().get("llm_gpu_layers", 0) or 0)
             _llm = Llama(
                 model_path=str(model),
                 n_ctx=4096,
                 n_threads=max(2, (os.cpu_count() or 4) - 1),
+                n_gpu_layers=-1 if gpu_layers < 0 else gpu_layers,  # -1=全部层卸载到 GPU
                 verbose=False,
             )
             _loaded_path = str(model)
@@ -101,21 +103,96 @@ def _get_llm():
     return _llm
 
 
+def api_ready() -> tuple[bool, str]:
+    """外部 API 引擎配置完备性检查。"""
+    cfg = config.get()
+    base = (cfg.get("llm_api_base") or "").strip()
+    key = (cfg.get("llm_api_key") or "").strip()
+    model = (cfg.get("llm_api_model") or "").strip()
+    if not base:
+        return False, "未配置 API 地址（如 https://api.deepseek.com/v1）"
+    if not key:
+        return False, "未配置 API Key"
+    if not model:
+        return False, "未配置模型名（如 deepseek-chat）"
+    return True, f"{model} @ {base}"
+
+
+def _extract_api(text: str, max_input_chars: int = 6000) -> Optional[dict]:
+    """外部 OpenAI 兼容 API 引擎（联网大模型：DeepSeek/OpenAI/通义/Kimi 等）。"""
+    import urllib.request
+    cfg = config.get()
+    base = (cfg.get("llm_api_base") or "").strip().rstrip("/")
+    url = f"{base}/chat/completions"
+    prompt = PROMPT_TEMPLATE.format(text=text[:max_input_chars])
+    payload = json.dumps({
+        "model": cfg.get("llm_api_model", "").strip(),
+        "messages": [
+            {"role": "system", "content": "你是简历信息抽取引擎，只输出 JSON，不输出任何其他内容。"},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 1200,
+    }).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, method="POST", headers={
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {(cfg.get('llm_api_key') or '').strip()}",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode()[:200]
+        except Exception:
+            pass
+        raise RuntimeError(f"API 调用失败 HTTP {e.code}: {body}") from e
+    except Exception as e:
+        raise RuntimeError(f"API 调用失败: {type(e).__name__}: {e}") from e
+    try:
+        raw = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as e:
+        raise RuntimeError(f"API 响应结构异常: {str(data)[:200]}") from e
+    obj = _extract_json(raw)
+    return _normalize(obj) if obj else None
+
+
 def status() -> dict:
-    """LLM 可用性状态（不触发加载）。"""
+    """AI 引擎状态（不触发加载）：engine=local|api，含各自就绪信息。"""
     import importlib.util
-    installed = importlib.util.find_spec("llama_cpp") is not None
-    model = find_model()
-    return {
-        "installed": installed,
-        "model_found": bool(model),
-        "model_path": str(model) if model else "",
-        "model_name": model.name if model else "",
-        "loaded": _llm is not None,
-        "engine": "Qwen2.5-1.5B-Instruct GGUF (llama.cpp, 纯CPU离线)",
+    cfg = config.get()
+    mode = "api" if cfg.get("llm_engine") == "api" else "local"
+    llm_on = bool(cfg.get("llm_enabled", True))
+    out = {
+        "mode": mode,
+        "enabled_cfg": llm_on,
+        "gpu_layers": int(cfg.get("llm_gpu_layers", 0) or 0),
         "load_error": _load_error,
-        "enabled": bool(config.get().get("llm_enabled", True)) and installed and bool(model),
     }
+    if mode == "api":
+        ready, detail = api_ready()
+        out.update({
+            "engine": f"外部 API（联网大模型）：{detail}",
+            "api_ready": ready,
+            "api_base": cfg.get("llm_api_base", ""),
+            "api_model": cfg.get("llm_api_model", ""),
+            "api_key_set": bool((cfg.get("llm_api_key") or "").strip()),
+            "enabled": llm_on and ready,
+        })
+    else:
+        installed = importlib.util.find_spec("llama_cpp") is not None
+        model = find_model()
+        out.update({
+            "installed": installed,
+            "model_found": bool(model),
+            "model_path": str(model) if model else "",
+            "model_name": model.name if model else "",
+            "loaded": _llm is not None,
+            "engine": "本地 GGUF 小模型（llama.cpp，离线）" + ("·GPU" if out["gpu_layers"] != 0 else "·CPU"),
+            "enabled": llm_on and installed and bool(model),
+        })
+    return out
 
 
 def _extract_json(raw: str) -> Optional[dict]:
@@ -202,9 +279,12 @@ def _normalize(obj: dict) -> dict:
 
 
 def extract(text: str, max_input_chars: int = 3500) -> Optional[dict]:
-    """LLM 抽取主入口：返回规范化字段 dict；任何失败返回 None（主流程回退规则结果）。"""
+    """AI 抽取主入口：按配置分发 本地GGUF / 外部API 引擎。
+    返回规范化字段 dict；任何失败返回 None（主流程回退规则结果）。"""
     if not text or not text.strip():
         return None
+    if config.get().get("llm_engine") == "api":
+        return _extract_api(text, max_input_chars=6000)  # 联网大模型上下文宽裕，多给文本
     llm = _get_llm()
     prompt = PROMPT_TEMPLATE.format(text=text[:max_input_chars])
     with _lock:

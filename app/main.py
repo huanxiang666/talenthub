@@ -12,6 +12,7 @@ import re
 import socket
 import subprocess
 import sys
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -25,7 +26,8 @@ from pydantic import BaseModel
 from . import __version__, config, db
 from .extract import llm_parser, loader, ocr_engine, parser
 from .services import excel as excel_svc
-from .services import model_hub
+from .services import lock_auth, model_hub
+from .services import applications as app_svc
 from .services import talent as talent_svc
 
 
@@ -33,6 +35,7 @@ from .services import talent as talent_svc
 async def lifespan(_app: FastAPI):
     db.init_db()
     config.ensure_dirs()
+    _start_apply_portal()   # 第二端口：投递门户（config.apply_enabled 可关）
     yield
 
 
@@ -88,12 +91,125 @@ def _err(msg: str, code: int = 400):
     raise HTTPException(code, msg)
 
 
-def _disposition(fname: str) -> dict:
-    """RFC 5987：中文文件名必须百分号编码，附 ASCII 回退名。"""
+def _disposition(fname: str, inline: bool = False) -> dict:
+    """RFC 5987：中文文件名必须百分号编码，附 ASCII 回退名。inline=浏览器内预览。"""
     from urllib.parse import quote
     ascii_fallback = re.sub(r"[^\x20-\x7e]", "_", fname) or "download"
+    kind = "inline" if inline else "attachment"
     return {"Content-Disposition":
-            f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(fname)}"}
+            f"{kind}; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(fname)}"}
+
+
+# ---------- 锁屏鉴权中间件 ----------
+# 锁定启用后，除白名单外的 /api/* 需要 Bearer 令牌；页面静态资源不锁（由前端弹锁屏层）。
+_AUTH_WHITELIST = ("/api/health", "/api/auth/", "/api/about")
+
+
+@app.middleware("http")
+async def lock_middleware(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and not path.startswith(_AUTH_WHITELIST):
+        if lock_auth.status()["enabled"]:
+            auth = request.headers.get("authorization", "")
+            token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+            if not lock_auth.check_token(token):
+                return JSONResponse(status_code=401, content={"detail": "locked"})
+    return await call_next(request)
+
+
+# ---------- 锁屏 / 版权 ----------
+
+class PasswordIn(BaseModel):
+    password: str
+
+
+class LockSetupIn(BaseModel):
+    password: str
+    auto_lock_minutes: int = 30
+
+
+class LockChangeIn(BaseModel):
+    old_password: str
+    new_password: str
+    auto_lock_minutes: Optional[int] = None
+
+
+@app.get("/api/auth/status")
+def auth_status():
+    st = lock_auth.status()
+    st["forgot_hint"] = lock_auth.FORGOT_HINT
+    return st
+
+
+@app.post("/api/auth/setup")
+def auth_setup(body: LockSetupIn):
+    try:
+        st = lock_auth.setup(body.password, body.auto_lock_minutes)
+        db.log_event("lock", "锁屏密码已设置")
+        return st
+    except ValueError as e:
+        _err(str(e))
+
+
+@app.post("/api/auth/unlock")
+def auth_unlock(body: PasswordIn):
+    try:
+        return lock_auth.unlock(body.password)
+    except PermissionError:
+        _err("密码错误", 403)
+
+
+@app.post("/api/auth/change")
+def auth_change(body: LockChangeIn):
+    try:
+        lock_auth.change(body.old_password, body.new_password)
+        st = lock_auth.set_auto_lock(body.auto_lock_minutes if body.auto_lock_minutes is not None
+                                     else lock_auth.status()["auto_lock_minutes"],
+                                     body.new_password)
+        db.log_event("lock", "锁屏密码已修改")
+        return st
+    except PermissionError:
+        _err("原密码错误", 403)
+    except ValueError as e:
+        _err(str(e))
+
+
+@app.post("/api/auth/disable")
+def auth_disable(body: PasswordIn):
+    try:
+        db.log_event("lock", "锁屏已关闭")
+        return lock_auth.disable(body.password)
+    except PermissionError:
+        _err("密码错误", 403)
+
+
+@app.get("/api/about")
+def about():
+    """版权与联系信息（页脚/关于/落地页共用）。"""
+    return {"app": config.get().get("app_name"), "version": __version__,
+            "copyright": config.COPYRIGHT}
+
+
+# ---------- 投递门户（第二端口） ----------
+
+def _start_apply_portal():
+    cfg = config.get()
+    if not cfg.get("apply_enabled", True):
+        print("[apply] 投递门户已在配置中关闭")
+        return
+
+    def _run():
+        import uvicorn as _uv
+        from .apply.apply_app import apply_app
+        port = int(cfg.get("apply_port", 8301))
+        try:
+            _uv.run(apply_app, host=cfg.get("host", "0.0.0.0"), port=port,
+                    log_level="warning", access_log=False)
+        except OSError as e:
+            print(f"[apply] 投递门户启动失败（端口 {port} 可能被占用）: {e}")
+
+    threading.Thread(target=_run, daemon=True, name="apply-portal").start()
+    print(f"[apply] 投递门户已启动: http://127.0.0.1:{cfg.get('apply_port', 8301)}")
 
 
 # ---------- 系统 / 设置 ----------
@@ -112,18 +228,38 @@ def system_info(request: Request):
     if lan != "127.0.0.1":
         urls.append(f"http://{lan}:{port}")
     db_size = config.DB_PATH.stat().st_size if config.DB_PATH.exists() else 0
+    apply_urls = []
+    if cfg.get("apply_enabled", True):
+        ap = cfg.get("apply_port", 8301)
+        apply_urls.append(f"http://127.0.0.1:{ap}")
+        if lan != "127.0.0.1":
+            apply_urls.append(f"http://{lan}:{ap}")
     return {
         "version": __version__,
         "python": platform.python_version(),
         "os": f"{platform.system()} {platform.release()}",
         "urls": urls,
+        "apply_urls": apply_urls,
         "host": cfg["host"], "port": port,
         "open_to_lan": cfg["host"] == "0.0.0.0",
         "db_path": str(config.DB_PATH), "db_size_kb": round(db_size / 1024, 1),
         "upload_dir": str(config.UPLOAD_DIR),
         "ocr": ocr_engine.status(),
         "llm": llm_parser.status(),
+        "statuses": db.statuses(),
+        "copyright": config.COPYRIGHT,
     }
+
+
+@app.get("/api/system/resources")
+def system_resources():
+    """内存/GPU 探测 + 模型档位建议（设置页 AI 区块展示）。"""
+    return model_hub.system_resources()
+
+
+@app.get("/api/statuses")
+def get_statuses():
+    return {"statuses": db.statuses(), "default": config.DEFAULT_STATUSES}
 
 
 class SettingsIn(BaseModel):
@@ -136,11 +272,24 @@ class SettingsIn(BaseModel):
     llm_enabled: Optional[bool] = None
     llm_model_path: Optional[str] = None
     llm_min_confidence: Optional[float] = None
+    llm_engine: Optional[str] = None
+    llm_api_base: Optional[str] = None
+    llm_api_key: Optional[str] = None
+    llm_api_model: Optional[str] = None
+    llm_gpu_layers: Optional[int] = None
+    custom_statuses: Optional[str] = None
+    apply_enabled: Optional[bool] = None
+    apply_port: Optional[int] = None
+    apply_captcha_disabled: Optional[bool] = None
+    apply_company_name: Optional[str] = None
 
 
 @app.get("/api/settings")
 def get_settings():
-    return {k: v for k, v in config.get().items() if not k.startswith("_")}
+    cfg = {k: v for k, v in config.get().items() if not k.startswith("_")}
+    if cfg.get("llm_api_key"):
+        cfg["llm_api_key"] = "******"   # 密钥不回显，只示"已设置"
+    return cfg
 
 
 @app.put("/api/settings")
@@ -148,13 +297,27 @@ def put_settings(body: SettingsIn):
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     if "host" in patch and patch["host"] not in ("127.0.0.1", "0.0.0.0", "localhost"):
         _err("host 只能是 127.0.0.1（仅本机）或 0.0.0.0（开放端口）")
-    if "port" in patch and not (1024 <= int(patch["port"]) <= 65535):
-        _err("端口需在 1024-65535 之间")
+    for pk in ("port", "apply_port"):
+        if pk in patch and not (1024 <= int(patch[pk]) <= 65535):
+            _err(f"{pk} 需在 1024-65535 之间")
     if "llm_min_confidence" in patch and not (0 <= float(patch["llm_min_confidence"]) <= 1):
         _err("llm_min_confidence 需在 0~1 之间")
     if "llm_model_path" in patch and patch["llm_model_path"] and not Path(patch["llm_model_path"]).exists():
         _err(f"模型路径不存在: {patch['llm_model_path']}")
-    return config.save(patch)
+    if "llm_engine" in patch and patch["llm_engine"] not in ("local", "api"):
+        _err("llm_engine 只能是 local（本地模型）或 api（外部接口）")
+    if "llm_api_key" in patch and patch["llm_api_key"] == "******":
+        patch.pop("llm_api_key")   # 掩码值＝未修改，忽略
+    if "custom_statuses" in patch:
+        raw = str(patch["custom_statuses"]).strip()
+        if raw:
+            items = [s.strip()[:12] for s in re.split(r"[、,，;；/|]", raw) if s.strip()][:12]
+            if not items:
+                _err("自定义状态格式不正确")
+            patch["custom_statuses"] = "、".join(items)
+    saved = config.save(patch)
+    need_restart = [k for k in ("host", "port", "apply_enabled", "apply_port") if k in patch]
+    return {"config": saved, "need_restart": need_restart}
 
 
 # ---------- 本地 AI 模型（下载/状态） ----------
@@ -172,8 +335,9 @@ def llm_status():
 @app.get("/api/llm/models")
 def llm_models():
     return {"models": model_hub.catalog(),
-            "models_dir": str(config.DATA_DIR / "models"),
-            "download": model_hub.progress()}
+            "models_dir": str(config.MODELS_DIR),
+            "download": model_hub.progress(),
+            "resources": model_hub.system_resources()}
 
 
 @app.post("/api/llm/download")
@@ -307,8 +471,8 @@ def batch_op(body: BatchIn):
     if body.action == "delete":
         affected = talent_svc.delete_talents(body.ids)
     elif body.action in ("status", "rating"):
-        if body.action == "status" and body.value not in db.STATUS_LIST:
-            _err(f"非法状态值，可选 {db.STATUS_LIST}")
+        if body.action == "status" and body.value not in db.statuses():
+            _err(f"非法状态值，可选 {db.statuses()}")
         if body.action == "rating" and (body.value or "").upper() not in db.RATING_LIST + [""]:
             _err("非法评级值，可选 A/B/C/D 或留空")
         for tid in body.ids:
@@ -334,7 +498,7 @@ def batch_op(body: BatchIn):
 
 
 @app.get("/api/files/{tid}")
-def get_original_file(tid: int):
+def get_original_file(tid: int, inline: int = 0):
     t = talent_svc.get_talent(tid)
     if not t or not t.get("stored_path"):
         _err("该记录没有关联的原件", 404)
@@ -346,7 +510,69 @@ def get_original_file(tid: int):
         _err("非法文件路径", 403)
     if not p.exists():
         _err("原件文件已不存在", 404)
-    return FileResponse(p, filename=t.get("source_file") or p.name)
+    fname = t.get("source_file") or p.name
+    return FileResponse(p, filename=fname,
+                        content_disposition_type="inline" if inline else "attachment")
+
+
+# ---------- 投递审核（管理端） ----------
+
+@app.get("/api/applications")
+def list_applications(status: str = "", page: int = 1, size: int = 20):
+    return app_svc.list_applications(status, page, size)
+
+
+@app.get("/api/applications/{aid}")
+def get_application(aid: int):
+    a = app_svc.get_application(aid)
+    if not a:
+        _err("投递记录不存在", 404)
+    a.pop("ip", None)
+    return a
+
+
+class ReviewIn(BaseModel):
+    action: str            # approve | reject
+    reason: str = ""
+
+
+@app.post("/api/applications/{aid}/review")
+def review_application(aid: int, body: ReviewIn):
+    try:
+        a = app_svc.review_application(aid, body.action, body.reason)
+    except LookupError as e:
+        _err(str(e), 404)
+    except ValueError as e:
+        _err(str(e))
+    return a
+
+
+@app.post("/api/applications/{aid}/to-talent")
+def application_to_talent(aid: int):
+    """同意入选并一键转入人才库（自动解析其简历文件 + 表单字段合并）。"""
+    try:
+        t = app_svc.application_to_talent(aid)
+    except LookupError as e:
+        _err(str(e), 404)
+    except ValueError as e:
+        _err(str(e))
+    return t
+
+
+@app.get("/api/applications/{aid}/file")
+def get_application_file(aid: int, inline: int = 1):
+    a = app_svc.get_application(aid)
+    if not a:
+        _err("投递记录不存在", 404)
+    p = Path(a.get("file_path") or "")
+    if not a.get("file_path") or not p.exists():
+        _err("该投递没有简历文件", 404)
+    try:
+        p.resolve().relative_to(config.APPLICATION_DIR.resolve())
+    except ValueError:
+        _err("非法文件路径", 403)
+    return FileResponse(p, filename=a.get("file_name") or p.name,
+                        content_disposition_type="inline" if inline else "attachment")
 
 
 # ---------- 简历导入（PDF/Word/图片 → 解析草稿 → 批量入库） ----------
@@ -606,6 +832,17 @@ def list_events(limit: int = Query(50, ge=1, le=200)):
     with db.db() as conn:
         rows = conn.execute("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
     return {"items": [dict(r) for r in rows]}
+
+
+class EventsDeleteIn(BaseModel):
+    ids: Optional[list[int]] = None   # None=清空全部
+
+
+@app.delete("/api/events")
+def delete_events(body: EventsDeleteIn):
+    n = db.clear_events(body.ids)
+    db.log_event("events_clear", f"删除操作日志 {n} 条")
+    return {"deleted": n}
 
 
 # ---------- 静态页面（放最后，兜底路由） ----------

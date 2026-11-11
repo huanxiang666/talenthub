@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TalentHub 企业人才库 — 本地 AI 简历解析 · 人才精准管理</title>
+<meta name="description" content="跨平台企业人才库管理系统：简历批量导入（PDF/Word/图片 OCR）、本地 AI 大模型智能解析非标准简历、投递门户、锁屏保护、数据合并、Excel 导入导出。完全本地运行，数据不出内网。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231d9bf0'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3ET%3C/text%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #ffffff; --soft: #f7f9f9; --ink: #0f1419; --ink2: #38444d; --muted: #536471;
+  --faint: #8b98a5; --line: #eff3f4; --primary: #1d9bf0; --deep: #1a8cd8; --softblue: #e8f5fd;
+  --ok: #00ba7c; --warn: #f59e0b;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body { font-family: var(--font); color: var(--ink); background: var(--bg); line-height: 1.6; -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+a { color: var(--primary); text-decoration: none; }
+
+/* 顶部导航（毛玻璃，Apple 风） */
+nav { position: sticky; top: 0; z-index: 50; background: rgba(255,255,255,.82); backdrop-filter: saturate(180%) blur(16px); -webkit-backdrop-filter: saturate(180%) blur(16px); border-bottom: 1px solid var(--line); }
+nav .wrap { display: flex; align-items: center; gap: 26px; height: 56px; }
+.nav-logo { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 17px; color: var(--ink); }
+.nav-logo .mark { width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(145deg,#4ab3f4,#1d9bf0 55%,#1a8cd8); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 16px; box-shadow: 0 3px 10px rgba(29,155,240,.35); }
+nav .links { display: flex; gap: 22px; margin-left: auto; font-size: 14px; font-weight: 600; }
+nav .links a { color: var(--muted); transition: color .2s; }
+nav .links a:hover { color: var(--primary); }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 99px; font-weight: 700; cursor: pointer; border: 0; transition: all .2s cubic-bezier(.32,.72,0,1); font-family: inherit; }
+.btn-blue { background: var(--primary); color: #fff; padding: 12px 30px; font-size: 15.5px; box-shadow: 0 4px 16px rgba(29,155,240,.35); }
+.btn-blue:hover { background: var(--deep); transform: translateY(-1px); box-shadow: 0 8px 24px rgba(29,155,240,.4); }
+.btn-dark { background: var(--ink); color: #fff; padding: 12px 30px; font-size: 15.5px; }
+.btn-dark:hover { background: #272c30; }
+.btn-ghost { background: transparent; border: 1.5px solid #cfd9de; color: var(--ink); padding: 11px 28px; font-size: 15px; }
+.btn-ghost:hover { border-color: var(--primary); color: var(--primary); background: var(--softblue); }
+
+/* Hero */
+.hero { text-align: center; padding: 96px 24px 72px; background:
+  radial-gradient(1200px 500px at 50% -100px, var(--softblue), transparent 70%); }
+.hero .tag { display: inline-block; background: var(--softblue); color: var(--deep); font-size: 13px; font-weight: 700; padding: 6px 16px; border-radius: 99px; margin-bottom: 22px; }
+.hero h1 { font-size: clamp(34px, 5.4vw, 58px); font-weight: 800; letter-spacing: -1.5px; line-height: 1.15; }
+.hero h1 .grad { background: linear-gradient(90deg, #1d9bf0, #7856ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.hero p.sub { font-size: clamp(15px, 2vw, 18.5px); color: var(--muted); max-width: 720px; margin: 20px auto 0; line-height: 1.75; }
+.hero .cta { display: flex; gap: 14px; justify-content: center; margin-top: 38px; flex-wrap: wrap; }
+.hero .meta { margin-top: 20px; font-size: 13px; color: var(--faint); }
+.shots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 56px; }
+.shots figure { background: var(--soft); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; box-shadow: 0 4px 20px rgba(15,20,25,.06); }
+.shots img { width: 100%; display: block; }
+.shots figcaption { padding: 10px 14px; font-size: 12.5px; color: var(--muted); text-align: left; }
+
+/* 特性区块 */
+section.block { padding: 84px 0; }
+section.block.alt { background: var(--soft); }
+.block-head { text-align: center; max-width: 680px; margin: 0 auto 52px; }
+.block-head .kicker { color: var(--primary); font-size: 14px; font-weight: 800; letter-spacing: 1px; }
+.block-head h2 { font-size: clamp(26px, 3.6vw, 38px); font-weight: 800; letter-spacing: -.8px; margin-top: 8px; }
+.block-head p { color: var(--muted); margin-top: 12px; font-size: 15.5px; }
+.grid { display: grid; gap: 18px; }
+.grid.c3 { grid-template-columns: repeat(3, 1fr); }
+.grid.c2 { grid-template-columns: repeat(2, 1fr); }
+.fcard { background: var(--bg); border: 1px solid var(--line); border-radius: 18px; padding: 26px 24px; transition: transform .25s cubic-bezier(.32,.72,0,1), box-shadow .25s; }
+.alt .fcard { background: var(--bg); }
+.fcard:hover { transform: translateY(-3px); box-shadow: 0 12px 32px rgba(15,20,25,.09); }
+.fcard .ic { width: 46px; height: 46px; border-radius: 13px; display: flex; align-items: center; justify-content: center; font-size: 22px; margin-bottom: 16px; background: var(--softblue); }
+.fcard h3 { font-size: 17px; font-weight: 800; margin-bottom: 8px; letter-spacing: -.2px; }
+.fcard p { color: var(--muted); font-size: 13.5px; line-height: 1.8; }
+.fcard p b { color: var(--ink2); }
+.pill-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.pill-row span { background: var(--soft); border: 1px solid var(--line); color: var(--muted); font-size: 11.5px; font-weight: 600; padding: 3px 11px; border-radius: 99px; }
+
+/* AI 双引擎对比 */
+.duo { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.duo .fcard.hl { border: 1.5px solid var(--primary); box-shadow: 0 8px 28px rgba(29,155,240,.12); }
+.duo h3 .b { font-size: 11px; background: var(--primary); color: #fff; border-radius: 99px; padding: 2px 9px; vertical-align: 2px; margin-left: 8px; }
+
+/* 数字条 */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; text-align: center; }
+.stats .n { font-size: clamp(30px, 4vw, 44px); font-weight: 800; letter-spacing: -1px; color: var(--primary); font-variant-numeric: tabular-nums; }
+.stats .t { font-size: 13px; color: var(--muted); margin-top: 4px; }
+
+/* 下载 */
+.dl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; max-width: 760px; margin: 0 auto; }
+.dl-card { background: var(--bg); border: 1px solid var(--line); border-radius: 20px; padding: 34px 28px; text-align: center; }
+.dl-card .os { font-size: 40px; }
+.dl-card h3 { font-size: 18px; margin: 12px 0 4px; }
+.dl-card p { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+footer { border-top: 1px solid var(--line); padding: 42px 0 56px; background: var(--soft); }
+footer .wrap { display: flex; flex-direction: column; gap: 10px; align-items: center; text-align: center; }
+footer .cp { font-size: 13px; color: var(--ink2); font-weight: 600; }
+footer .nt { font-size: 12.5px; color: var(--muted); max-width: 640px; }
+footer .ct { font-size: 12.5px; color: var(--faint); }
+@media (max-width: 860px) {
+  .grid.c3, .grid.c2, .duo, .dl-grid, .shots { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  nav .links { display: none; }
+  .hero { padding: 64px 16px 48px; }
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <span class="nav-logo"><span class="mark">T</span>TalentHub</span>
+    <div class="links">
+      <a href="#features">功能</a>
+      <a href="#ai">AI 解析</a>
+      <a href="#apply">投递门户</a>
+      <a href="#security">安全</a>
+      <a href="#download">下载</a>
+      <a href="https://github.com/huanxiang666/talenthub" target="_blank" rel="noopener">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <span class="tag">v1.2 · 完全本地运行 · Windows / Linux 双平台</span>
+  <h1>企业人才库，<br>装进<span class="grad">一个单文件</span>里</h1>
+  <p class="sub">简历批量导入 → 精准 OCR → <b>本地 AI 大模型</b>解析非标准简历 → 结构化入库 → 精准跟进管理。
+    数据全部留在你自己的机器上，局域网团队共享同一套仪表盘，另开独立端口接收候选人投递。</p>
+  <div class="cta">
+    <a class="btn btn-blue" href="#download">立即下载</a>
+    <a class="btn btn-ghost" href="https://github.com/huanxiang666/talenthub" target="_blank" rel="noopener">查看源码与文档</a>
+  </div>
+  <p class="meta">免安装 Python 环境 · 双击即用 · 开源仓库含全部构建流水线</p>
+  <div class="shots wrap" id="shots">
+    <figure><img src="screenshots/dashboard.png" alt="仪表盘截图" loading="lazy"><figcaption>仪表盘 — ECharts 实时人才结构分析</figcaption></figure>
+    <figure><img src="screenshots/talents.png" alt="人才库截图" loading="lazy"><figcaption>人才库 — 搜索筛选 · 批量操作 · 悬停速览</figcaption></figure>
+    <figure><img src="screenshots/settings.png" alt="设置截图" loading="lazy"><figcaption>系统设置 — AI 引擎 · 模型下载 · 锁屏保护</figcaption></figure>
+  </div>
+</header>
+
+<section class="block" id="features">
+  <div class="wrap">
+    <div class="block-head">
+      <div class="kicker">FEATURES</div>
+      <h2>从一份简历，到一座人才库</h2>
+      <p>招聘全流程数字化：收集、解析、审核、跟进、统计、导出，一个系统闭环完成。</p>
+    </div>
+    <div class="grid c3">
+      <div class="fcard"><div class="ic">📄</div><h3>批量简历导入</h3>
+        <p>一次拖入 <b>50 份</b> PDF / Word / 图片。文字版 PDF 直读、扫描版自动走<b>内置离线 OCR</b>（PP-OCRv4，中英混排）、Word 按文档顺序解析段落与表格。</p>
+        <div class="pill-row"><span>PDF 文字层</span><span>扫描 OCR</span><span>.docx</span><span>图片</span></div></div>
+      <div class="fcard"><div class="ic">🧠</div><h3>22+ 字段结构化解析</h3>
+        <p>姓名、电话、邮箱、微信、籍贯、政治面貌、学历、院校、专业、毕业年份、工作年限、当前/期望职位、薪资、技能、证书、多段工作经历……每份给<b>解析置信度</b>，低分标黄提醒人工核对。</p></div>
+      <div class="fcard"><div class="ic">🎯</div><h3>精准人才管理</h3>
+        <p>状态流水线<b>可完全自定义</b>、A/B/C/D 潜力评级、标签、跟进记录时间线、16 列全文搜索、多条件筛选、批量改状态/评级/打标签。</p></div>
+      <div class="fcard"><div class="ic">🔀</div><h3>数据合并与去重</h3>
+        <p>四种合并策略（跳过/补全/覆盖/总是新增），去重键 <b>电话 &gt; 邮箱 &gt; 姓名</b>，导入前逐行给出「新记录/疑似重复」预览分析；JSON 全量备份跨机器幂等合并。</p></div>
+      <div class="fcard"><div class="ic">📊</div><h3>Excel 双向 + 仪表盘</h3>
+        <p>带格式 xlsx 导出（双 sheet/冻结/筛选/着色）与别名表头导入；ECharts 仪表盘 4 卡片 5 图表，结论句由数据实时算出。</p></div>
+      <div class="fcard"><div class="ic">👁</div><h3>简历在线预览</h3>
+        <p>人才详情与投递审核中<b>窗口内直接预览</b> PDF 原件与图片简历；列表行悬停即显示教育/经历/期望速览卡，无需点开。</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="block alt" id="ai">
+  <div class="wrap">
+    <div class="block-head">
+      <div class="kicker">AI PARSING</div>
+      <h2>双引擎 AI 解析，非标准简历也能读懂</h2>
+      <p>口语化、无字段标签、信息散乱的简历，规则解析置信度低时自动交给 AI 补全纠错。</p>
+    </div>
+    <div class="duo">
+      <div class="fcard hl"><h3>本地小模型<span class="b">离线</span></h3>
+        <p>内置 <b>llama.cpp</b> 推理引擎，纯 CPU 即可运行 Qwen2.5 / Qwen3 / Llama-3.2 / Gemma-3 共 <b>7 档 GGUF 模型</b>（0.5B ~ 4B）。设置页<b>三源站一键下载</b>（hf-mirror / ModelScope / HuggingFace），并根据你的<b>内存与 GPU 自动推荐档位</b>；有 NVIDIA 显卡可开 GPU 卸载加速。数据一个字节都不出机器。</p>
+        <div class="pill-row"><span>Qwen2.5 0.5B/1.5B/3B</span><span>Qwen3-4B</span><span>Llama-3.2</span><span>Gemma-3</span><span>GPU 加速可选</span></div></div>
+      <div class="fcard"><h3>外部 API 引擎<span class="b" style="background:var(--ok)">联网</span></h3>
+        <p>接入任意 <b>OpenAI 兼容接口</b>：DeepSeek、OpenAI、通义千问、Kimi、本地 Ollama……填好地址与 Key 即用，解析质量更高、不占本机资源。API Key 仅保存在本机 config.json。</p>
+        <div class="pill-row"><span>DeepSeek</span><span>OpenAI</span><span>通义千问</span><span>Kimi</span><span>Ollama</span></div></div>
+    </div>
+    <div class="grid c3" style="margin-top:18px">
+      <div class="fcard"><div class="ic">🛡</div><h3>信任分层融合</h3><p>语义字段 AI 优先；电话/邮箱等<b>数字字段规则优先</b>防幻觉；「至今」锚点保护当前公司判定；技能证书归一化合并去重。AI 失败自动回退规则结果，解析永不中断。</p></div>
+      <div class="fcard"><div class="ic">⚡</div><h3>无模型也强</h3><p>增强版规则解析独立可用（毫秒级）：姓名黑名单防误抓、学位表述归一、中文数字年限、固话兜底、邮箱 <code>#</code>/<code>(at)</code> 变体修复。非标准简历实测 <b>15/15 关键字段全对</b>。</p></div>
+      <div class="fcard"><div class="ic">🧪</div><h3>一键自测</h3><p>设置页「测试解析一份样本」按钮，当场验证你的模型或 API 配置是否工作，解析结果直接弹出对照。</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="apply">
+  <div class="wrap">
+    <div class="block-head">
+      <div class="kicker">APPLY PORTAL</div>
+      <h2>独立投递门户，企业内部收简历</h2>
+      <p>自动开启第二端口（默认 8301），把这个地址发给候选人或内部推荐人即可。</p>
+    </div>
+    <div class="grid c3">
+      <div class="fcard"><div class="ic">📮</div><h3>候选人端</h3><p>移动端友好的投递页：基本信息 + 简历附件 + <b>推荐人</b>（内推场景）+ 自我介绍。提交即得 <b>8 位查询码</b>，凭「手机号 + 查询码」随时查进度、<b>待审核期间可自助修改资料</b>。</p></div>
+      <div class="fcard"><div class="ic">🧑‍💼</div><h3>管理端审核</h3><p>「投递审核」视图集中处理：窗口内预览简历 → <b>同意入选</b>（自动解析建档转入人才库，推荐人写入标签）或 <b>拒绝</b>（附原因，投递人可查）。侧栏角标实时提示待审核数。</p></div>
+      <div class="fcard"><div class="ic">🚧</div><h3>三重防滥用</h3><p><b>图形验证码</b>（一次性、防重放）+ 同 IP 每小时限 10 次 + 同手机号每日限 3 次；上传类型/大小白名单校验，路径逃逸防护。</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="block alt" id="security">
+  <div class="wrap">
+    <div class="block-head">
+      <div class="kicker">SECURITY</div>
+      <h2>数据在你手里，也受你保护</h2>
+    </div>
+    <div class="grid c3">
+      <div class="fcard"><div class="ic">🔒</div><h3>锁屏密码</h3><p>自定义 <b>6 位以上密码</b>（PBKDF2 加盐哈希存储），启用后全部数据接口需解锁令牌访问；支持自动锁定（N 分钟无操作）。忘记密码时按页面指引删除 <code>data/lock.json</code> 即可清除，人才数据无损。</p></div>
+      <div class="fcard"><div class="ic">🏠</div><h3>完全本地</h3><p>SQLite（WAL）单文件数据库 + 原件目录都在程序旁边，整体拷贝即迁移备份；除「外部 API 引擎」为可选项外，<b>全链路零联网依赖</b>。</p></div>
+      <div class="fcard"><div class="ic">🧹</div><h3>细节防护</h3><p>Excel 导出防公式注入、上传文件类型/大小白名单、SQL 全参数化、API Key 掩码回显、操作日志可查可清。</p></div>
+    </div>
+    <div class="stats" style="margin-top:52px">
+      <div><div class="n">98</div><div class="t">端到端自动化断言</div></div>
+      <div><div class="n">89</div><div class="t">真浏览器 UI 验收项</div></div>
+      <div><div class="n">7 档</div><div class="t">AI 模型 × 3 源站</div></div>
+      <div><div class="n">0</div><div class="t">数据出网（默认）</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="download">
+  <div class="wrap">
+    <div class="block-head">
+      <div class="kicker">DOWNLOAD</div>
+      <h2>单文件免安装，双击即用</h2>
+      <p>目标机器不需要 Python，不需要装任何依赖。数据生成在程序旁边，拷走即迁移。</p>
+    </div>
+    <div class="dl-grid">
+      <div class="dl-card">
+        <div class="os">🪟</div>
+        <h3>Windows</h3>
+        <p>TalentHub.exe · 约 130MB<br>Win10 / Win11 x64</p>
+        <a class="btn btn-dark" href="https://github.com/huanxiang666/talenthub/releases/latest" target="_blank" rel="noopener">下载最新版</a>
+      </div>
+      <div class="dl-card">
+        <div class="os">🐧</div>
+        <h3>Linux</h3>
+        <p>talenthub-linux · 约 190MB<br>glibc ≥ 2.39（Ubuntu 24.04 构建）</p>
+        <a class="btn btn-dark" href="https://github.com/huanxiang666/talenthub/releases/latest" target="_blank" rel="noopener">下载最新版</a>
+      </div>
+    </div>
+    <p style="text-align:center;color:var(--muted);font-size:13.5px;margin-top:26px">
+      也可以从源码运行：<code>git clone https://github.com/huanxiang666/talenthub && cd talenthub && ./run.sh</code>（Windows 双击 run.bat）</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="cp">TalentHub 企业人才库 · 慈溪八凯八威电子商务经营部 · 胡利杰 先生 开发</div>
+    <div class="nt">本软件为原创开发成果。<b>商业使用需获得书面申请授权</b>，请先联系我们。</div>
+    <div class="ct">联系：13208088838 · <a href="mailto:admin@8k8w.com">admin@8k8w.com</a> ·
+      <a href="https://github.com/huanxiang666/talenthub" target="_blank" rel="noopener">GitHub 仓库</a></div>
+  </div>
+</footer>
+
+</body>
+</html>

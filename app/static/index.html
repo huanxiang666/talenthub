@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TalentHub 企业人才库</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23123f38'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%23e8b04b' font-family='sans-serif' font-weight='bold'%3ET%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231d9bf0'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3ET%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 <script src="vendor/echarts.min.js"></script>
 </head>
@@ -18,24 +18,28 @@
     </div>
     <nav id="nav">
       <a href="#/dashboard" data-view="dashboard" class="nav-item">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></svg>
-        仪表盘</a>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></svg>
+        <span class="nav-label">仪表盘</span></a>
       <a href="#/talents" data-view="talents" class="nav-item">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        人才库</a>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span class="nav-label">人才库</span></a>
+      <a href="#/applications" data-view="applications" class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2 2 4-4"/></svg>
+        <span class="nav-label">投递审核</span><span id="nav-app-badge" class="nav-badge" hidden></span></a>
       <a href="#/import" data-view="import" class="nav-item">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
-        导入中心</a>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+        <span class="nav-label">导入中心</span></a>
       <a href="#/data" data-view="data" class="nav-item">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
-        数据管理</a>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        <span class="nav-label">数据管理</span></a>
       <a href="#/settings" data-view="settings" class="nav-item">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
-        系统设置</a>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+        <span class="nav-label">系统设置</span></a>
     </nav>
     <div class="sidebar-foot">
       <div id="server-dot" class="server-line"><span class="dot"></span><span id="server-text">连接中…</span></div>
       <div id="sidebar-port" class="port-line"></div>
+      <div class="copyright-line" id="sidebar-copyright"></div>
     </div>
   </aside>
 
@@ -51,7 +55,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input id="global-search" type="search" placeholder="搜姓名 / 电话 / 技能 / 公司…" autocomplete="off">
         </div>
-        <button id="btn-upload-top" class="btn btn-primary">
+        <button id="btn-lock-top" class="btn btn-ghost btn-sm" title="立即锁定屏幕" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          锁定</button>
+        <button id="btn-upload-top" class="btn btn-dark">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           上传简历</button>
       </div>
@@ -112,9 +119,6 @@
               </select>
             </div>
             <div class="toolbar-actions">
-              <button id="btn-batch-upload" class="btn btn-primary" title="支持多选 PDF/Word/图片 批量上传解析">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                批量上传简历</button>
               <button id="btn-add-talent" class="btn btn-ghost">＋ 手动新增</button>
               <button id="btn-export-filtered" class="btn btn-ghost">导出 Excel</button>
             </div>
@@ -151,6 +155,38 @@
         </div>
       </section>
 
+      <!-- 投递审核 -->
+      <section id="view-applications" class="view" hidden>
+        <div class="card">
+          <div class="table-toolbar">
+            <div class="filters">
+              <select id="a-status" aria-label="按状态筛选">
+                <option value="">全部投递</option><option value="待审核">待审核</option>
+                <option value="已同意">已同意</option><option value="已拒绝">已拒绝</option></select>
+              <span id="apply-portal-url" class="muted"></span>
+            </div>
+            <div class="toolbar-actions">
+              <a id="btn-open-portal" class="btn btn-ghost" href="#" target="_blank" rel="noopener">打开投递页 ↗</a>
+              <button id="btn-apply-refresh" class="btn btn-ghost">刷新</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr>
+                <th>投递人</th><th>联系方式</th><th>期望职位</th><th>推荐人</th>
+                <th>简历</th><th>状态</th><th>投递时间</th><th class="w-ops" style="width:220px">操作</th>
+              </tr></thead>
+              <tbody id="app-tbody"></tbody>
+            </table>
+            <div id="app-empty" class="empty" hidden>
+              <p>暂无投递记录</p>
+              <p class="sub">把上面的投递页地址（第二端口）发给候选人或内部推荐人即可开始收集简历</p>
+            </div>
+          </div>
+          <div id="app-pager" class="pager"></div>
+        </div>
+      </section>
+
       <!-- 导入中心 -->
       <section id="view-import" class="view" hidden>
         <div class="tabs">
@@ -164,7 +200,7 @@
               <div class="dropzone-icon-wrap">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
               </div>
-              <p class="dropzone-title"><b>拖拽简历文件到这里，支持数十份同时批量解析</b></p>
+              <p class="dropzone-title">拖拽简历文件到这里，支持数十份同时批量解析</p>
               <div class="dropzone-btns">
                 <label class="btn btn-primary like-btn">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -174,7 +210,7 @@
               </div>
               <p class="sub">格式支持：PDF（扫描版自动精准 OCR）、Word (.docx)、简历图片（JPG/PNG）、TXT；单次最大支持 50 份并发解析</p>
               <label class="check-line" style="justify-content:center;margin-top:12px;font-size:13px">
-                <input type="checkbox" id="force-llm"> 强制 AI 增强解析（每份都过本地大模型，较慢但非标准简历识别率最高；需先在「系统设置」下载模型）</label>
+                <input type="checkbox" id="force-llm"> 强制 AI 增强解析（每份都过大模型，较慢但非标准简历识别率最高；需先在「系统设置」配置模型或 API）</label>
             </div>
             <div id="resume-progress" class="progress-line" hidden><div class="bar"><i></i></div><span></span></div>
           </div>
@@ -209,8 +245,13 @@
         <div id="tab-table" class="tab-panel" hidden>
           <div class="card">
             <div id="dropzone-table" class="dropzone">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
-              <p><b>拖拽 Excel / CSV 表格到这里</b>，或 <label class="link like-btn">点击选择<input id="file-table" type="file" accept=".xlsx,.xlsm,.csv" hidden></label></p>
+              <div class="dropzone-icon-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+              </div>
+              <p class="dropzone-title">拖拽 Excel / CSV 表格到这里</p>
+              <div class="dropzone-btns">
+                <label class="btn btn-primary like-btn">选择表格文件<input id="file-table" type="file" accept=".xlsx,.xlsm,.csv" hidden></label>
+              </div>
               <p class="sub">表头自动识别常见别名；用于外部名单导入、多库数据合并（按 电话 &gt; 邮箱 &gt; 姓名 去重）</p>
             </div>
             <div id="table-progress" class="progress-line" hidden><div class="bar"><i></i></div><span></span></div>
@@ -272,7 +313,12 @@
           </div>
         </div>
         <div class="card">
-          <div class="card-head"><h3>操作日志</h3><span class="unit">最近 50 条</span></div>
+          <div class="card-head"><h3>操作日志</h3>
+            <div class="draft-actions">
+              <span class="unit">最近 50 条</span>
+              <button id="btn-clear-events" class="btn btn-sm btn-danger">清空日志</button>
+            </div>
+          </div>
           <div class="table-wrap"><table class="data-table"><thead>
             <tr><th class="w-time">时间</th><th>动作</th><th>明细</th></tr></thead>
             <tbody id="event-tbody"></tbody></table></div>
@@ -291,10 +337,17 @@
                 <label><input type="radio" name="host" value="0.0.0.0"> 开放端口，局域网可访问（0.0.0.0）</label>
               </div>
               <div class="form-row">
-                <label class="form-label" for="set-port">端口</label>
+                <label class="form-label" for="set-port">管理端口</label>
                 <input id="set-port" name="port" type="number" min="1024" max="65535" class="input w-120">
                 <span class="muted">改端口或开放范围后需点「保存并重启服务」</span>
               </div>
+              <div class="form-row">
+                <label class="form-label" for="set-apply-port">投递端口</label>
+                <input id="set-apply-port" name="apply_port" type="number" min="1024" max="65535" class="input w-120">
+                <label class="check-line"><input type="checkbox" name="apply_enabled"> 启用投递门户</label>
+              </div>
+              <div class="form-row"><label class="check-line">
+                <input type="checkbox" name="apply_captcha_disabled"> 关闭投递验证码（仅限完全可信内网，默认开启防滥用）</label></div>
               <div class="form-row"><label class="check-line">
                 <input type="checkbox" name="auto_open_browser"> 启动时自动打开浏览器（本地仪表页面）</label></div>
               <div class="form-row"><label class="check-line">
@@ -302,10 +355,18 @@
               <div class="form-row">
                 <label class="form-label" for="set-ocr-pages">OCR 页数上限</label>
                 <input id="set-ocr-pages" name="ocr_max_pages" type="number" min="1" max="200" class="input w-120">
-                <span class="muted">单份文档最多识别页数，防超大扫描件阻塞</span>
               </div>
               <div class="form-row"><label class="check-line">
                 <input type="checkbox" name="upload_keep_original"> 保留上传原件（可在人才详情下载回看）</label></div>
+              <div class="form-row">
+                <label class="form-label" for="set-company">公司名称</label>
+                <input id="set-company" name="apply_company_name" class="input" style="flex:1" placeholder="投递页显示的公司名">
+              </div>
+              <div class="form-row">
+                <label class="form-label" for="set-statuses">自定义状态</label>
+                <input id="set-statuses" name="custom_statuses" class="input" style="flex:1"
+                       placeholder="留空=默认七状态；自定义用顿号分隔，如：新线索、初筛、复试、Offer">
+              </div>
               <div class="form-row btn-row">
                 <button type="button" id="btn-save-settings" class="btn btn-primary">保存设置</button>
                 <button type="button" id="btn-restart" class="btn btn-warn">保存并重启服务</button>
@@ -317,26 +378,108 @@
             <div id="sysinfo" class="sysinfo"></div>
             <div class="card-head" style="margin-top:18px"><h3>访问地址</h3></div>
             <div id="sys-urls" class="sysinfo"></div>
-            <p class="hint">开放端口后，同一局域网的电脑/手机浏览器直接访问上面的局域网地址即可使用同一套仪表与人才库；公网部署请自行加防火墙白名单或反代鉴权。</p>
+            <p class="hint">开放端口后，同一局域网的电脑/手机浏览器直接访问上面的局域网地址即可使用同一套仪表与人才库；投递门户（第二端口）发给候选人填写。公网部署请自行加防火墙白名单或反代鉴权。</p>
+            <div class="card-head" style="margin-top:18px"><h3>关于与版权</h3></div>
+            <div id="about-box" class="db-info"></div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head"><h3>🔒 锁屏密码</h3><span id="lock-badge" class="unit"></span></div>
+            <div id="lock-setup-box">
+              <p class="muted" style="margin-bottom:12px">开启后，所有数据接口都需要密码解锁才能访问（页面数据被锁定），防止他人随意查看人才资料。密码至少 6 位，可自定义更长。</p>
+              <form id="lock-form-setup" class="form">
+                <div class="form-row">
+                  <label class="form-label" for="lock-p1">设置密码</label>
+                  <input id="lock-p1" type="password" class="input" style="flex:1" placeholder="至少 6 位" autocomplete="new-password">
+                </div>
+                <div class="form-row">
+                  <label class="form-label" for="lock-p2">确认密码</label>
+                  <input id="lock-p2" type="password" class="input" style="flex:1" placeholder="再输一次" autocomplete="new-password">
+                </div>
+                <div class="form-row">
+                  <label class="form-label" for="lock-auto">自动锁定</label>
+                  <input id="lock-auto" type="number" min="0" max="240" value="30" class="input w-120">
+                  <span class="muted">分钟无操作自动锁屏（0 = 不自动）</span>
+                </div>
+                <div class="form-row btn-row"><button type="button" id="btn-lock-setup" class="btn btn-dark">启用锁屏</button></div>
+              </form>
+            </div>
+            <div id="lock-manage-box" hidden>
+              <div class="form">
+                <div class="form-row">
+                  <label class="form-label" for="lock-old">原密码</label>
+                  <input id="lock-old" type="password" class="input" style="flex:1" autocomplete="current-password">
+                </div>
+                <div class="form-row">
+                  <label class="form-label" for="lock-new">新密码</label>
+                  <input id="lock-new" type="password" class="input" style="flex:1" placeholder="至少 6 位；留空则只改自动锁定时间" autocomplete="new-password">
+                </div>
+                <div class="form-row">
+                  <label class="form-label" for="lock-auto2">自动锁定</label>
+                  <input id="lock-auto2" type="number" min="0" max="240" class="input w-120">
+                  <span class="muted">分钟（0 = 不自动）</span>
+                </div>
+                <div class="form-row btn-row">
+                  <button type="button" id="btn-lock-change" class="btn btn-primary">修改密码/时间</button>
+                  <button type="button" id="btn-lock-disable" class="btn btn-danger">关闭锁屏</button>
+                </div>
+              </div>
+              <p class="hint" id="lock-forgot-hint"></p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3>🤖 AI 智能解析引擎</h3><span id="llm-badge" class="unit"></span></div>
+            <div class="engine-switch" style="margin-bottom:14px">
+              <button type="button" id="engine-local" class="on">本地小模型（离线）</button>
+              <button type="button" id="engine-api">外部 API（联网大模型）</button>
+            </div>
+            <form id="llm-form" class="form">
+              <div id="llm-local-box">
+                <div class="form-row"><label class="check-line">
+                  <input type="checkbox" name="llm_enabled"> 启用 AI 增强解析（规则解析置信度低的简历自动交给 AI 补全字段）</label></div>
+                <div class="form-row">
+                  <label class="form-label" for="set-llm-min">AI 触发阈值</label>
+                  <input id="set-llm-min" name="llm_min_confidence" type="number" min="0" max="1" step="0.05" class="input w-120">
+                  <span class="muted">规则置信度低于该值才调用 AI（批量导入提速）</span>
+                </div>
+                <div class="form-row">
+                  <label class="form-label" for="set-gpu-layers">GPU 卸载层数</label>
+                  <input id="set-gpu-layers" name="llm_gpu_layers" type="number" min="-1" max="200" class="input w-120">
+                  <span class="muted">0=纯CPU；-1=全部层交给 NVIDIA GPU（需装 CUDA 版 llama-cpp-python，见 README）</span>
+                </div>
+                <div id="llm-status" class="db-info" style="margin-top:10px"></div>
+                <div id="ram-hint" class="ram-hint"></div>
+              </div>
+              <div id="llm-api-box" hidden>
+                <p class="muted" style="margin-bottom:10px">接入任意 OpenAI 兼容接口（DeepSeek / OpenAI / 通义千问 / Kimi / 本地 Ollama…），解析质量更高、不占本机资源，需联网。API Key 只保存在本机 config.json。</p>
+                <div class="form-row">
+                  <label class="form-label" for="api-base">API 地址</label>
+                  <input id="api-base" name="llm_api_base" class="input" style="flex:1" placeholder="https://api.deepseek.com/v1">
+                </div>
+                <div class="form-row">
+                  <label class="form-label" for="api-key">API Key</label>
+                  <input id="api-key" name="llm_api_key" type="password" class="input" style="flex:1" placeholder="sk-…" autocomplete="off">
+                </div>
+                <div class="form-row">
+                  <label class="form-label" for="api-model">模型名</label>
+                  <input id="api-model" name="llm_api_model" class="input" style="flex:1" placeholder="deepseek-chat / gpt-4o-mini / qwen-plus">
+                </div>
+                <div class="form-row"><label class="check-line">
+                  <input type="checkbox" name="llm_enabled_api"> 启用 AI 增强解析（外部 API 引擎）</label></div>
+              </div>
+              <div class="form-row btn-row">
+                <button type="button" id="btn-save-llm" class="btn btn-primary">保存 AI 设置</button>
+                <button type="button" id="btn-test-llm" class="btn btn-ghost">测试解析一份样本</button>
+              </div>
+            </form>
           </div>
         </div>
 
         <div class="card">
-          <div class="card-head"><h3>AI 智能解析（本地 mini 大模型）</h3><span id="llm-badge" class="unit"></span></div>
-          <form id="llm-form" class="form">
-            <div class="form-row"><label class="check-line">
-              <input type="checkbox" name="llm_enabled"> 启用本地 AI 增强解析（Qwen2.5 GGUF，纯 CPU 离线推理；规则解析置信度低的简历自动交给 AI 补全字段）</label></div>
-            <div class="form-row">
-              <label class="form-label" for="set-llm-min">AI 触发阈值</label>
-              <input id="set-llm-min" name="llm_min_confidence" type="number" min="0" max="1" step="0.05" class="input w-120">
-              <span class="muted">规则解析置信度低于该值才调用 AI（批量导入提速；1.01 = 全部走 AI）</span>
-            </div>
-            <div class="form-row btn-row">
-              <button type="button" id="btn-save-llm" class="btn btn-primary">保存 AI 设置</button>
-            </div>
-          </form>
-          <div id="llm-status" class="db-info" style="margin-top:12px"></div>
-          <div class="card-head" style="margin-top:18px"><h3>模型下载</h3>
+          <div class="card-head"><h3>模型下载（本地引擎用）</h3>
             <span class="unit">模型不随程序分发，按需下载后自动启用；也可手动放入 <code id="llm-dir"></code></span></div>
           <div class="model-row">
             <select id="dl-model" aria-label="选择模型"></select>
@@ -347,7 +490,7 @@
             <div class="dl-bar"><i id="dl-bar-fill"></i></div>
             <span id="dl-text" class="muted"></span>
           </div>
-          <p class="hint">国内网络推荐 hf-mirror / ModelScope 源；HuggingFace 官方源需国际网络。下载完成后无需重启，下一次简历导入自动启用 AI 增强。</p>
+          <p class="hint">国内网络推荐 hf-mirror / ModelScope 源；HuggingFace 官方源需国际网络。下载完成后无需重启，下一次简历导入自动启用 AI 增强。内存/GPU 建议见上方蓝色提示条。</p>
         </div>
       </section>
     </main>
@@ -364,8 +507,9 @@
   </div>
   <div class="drawer-tabs">
     <button class="dtab active" data-dtab="info">档案信息</button>
+    <button class="dtab" data-dtab="preview">简历预览</button>
     <button class="dtab" data-dtab="notes">跟进记录 <span id="d-note-count" class="badge"></span></button>
-    <button class="dtab" data-dtab="raw">简历原文</button>
+    <button class="dtab" data-dtab="raw">解析原文</button>
   </div>
   <div id="dtab-info" class="dtab-panel">
     <form id="d-form" class="form form-grid"></form>
@@ -375,6 +519,9 @@
       <button id="d-delete" class="btn btn-danger">删除</button>
       <button id="d-save" class="btn btn-primary">保存修改</button>
     </div>
+  </div>
+  <div id="dtab-preview" class="dtab-panel" hidden>
+    <div id="d-preview" class="preview-frame"></div>
   </div>
   <div id="dtab-notes" class="dtab-panel" hidden>
     <div class="note-add">
@@ -407,6 +554,19 @@
   <div class="modal-foot">
     <button id="cf-cancel" class="btn btn-ghost">取消</button>
     <button id="cf-ok" class="btn btn-danger">确认</button>
+  </div>
+</div>
+
+<!-- 锁屏覆盖层 -->
+<div id="lock-screen" hidden>
+  <div class="lock-card">
+    <div class="lock-logo">🔒</div>
+    <h2>TalentHub 已锁定</h2>
+    <p class="lock-sub">输入密码解锁人才库数据</p>
+    <input id="lock-pass" type="password" class="input" placeholder="锁屏密码" autocomplete="current-password">
+    <div id="lock-err" class="lock-error"></div>
+    <button id="lock-unlock" class="btn btn-dark">解 锁</button>
+    <div class="lock-forgot" id="lock-forgot"></div>
   </div>
 </div>
 

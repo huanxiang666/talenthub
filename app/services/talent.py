@@ -48,8 +48,8 @@ def _clean(data: dict) -> dict:
                 out[k] = None
         else:
             out[k] = str(v).strip()
-    if out.get("status") and out["status"] not in db.STATUS_LIST:
-        out["status"] = "潜在"
+    if out.get("status") and out["status"] not in db.statuses():
+        out["status"] = db.statuses()[0]   # 自定义状态列表下回退到首个状态
     if out.get("rating") and out["rating"].upper() in db.RATING_LIST:
         out["rating"] = out["rating"].upper()
     elif out.get("rating") is not None and out.get("rating", "") not in db.RATING_LIST:
@@ -328,7 +328,7 @@ def stats() -> dict:
         "total": total, "month_new": month_new, "high_potential": high, "following": following,
         "by_education": pairs(edu_rows),
         "by_status": [{"name": s, "value": next((r["c"] for r in status_rows if r["k"] == s), 0)}
-                      for s in db.STATUS_LIST],
+                      for s in db.statuses()],
         "by_rating": pairs(rating_rows),
         "by_source": pairs(source_rows),
         "top_skills": [{"name": k, "value": v} for k, v in top_skills],

@@ -1,15 +1,16 @@
 /* TalentHub 前端逻辑 — 原生 JS 单文件，无构建步骤。
-   视图: #/dashboard #/talents #/import #/data #/settings */
+   视图: #/dashboard #/talents #/applications #/import #/data #/settings */
 "use strict";
 
-/* ================= 常量 ================= */
-const STATUSES = ["潜在", "跟进中", "已邀约", "已面试", "已录用", "不合适", "已归档"];
-const STATUS_COLORS = { "潜在": "#52616f", "跟进中": "#2456c9", "已邀约": "#6640d8", "已面试": "#a35c05", "已录用": "#15803d", "不合适": "#be3455", "已归档": "#75756e" };
+/* ================= 常量（X/Apple 色系） ================= */
+let STATUSES = ["潜在", "跟进中", "已邀约", "已面试", "已录用", "不合适", "已归档"];  // 启动时从 /api/statuses 动态刷新（支持自定义状态）
+const STATUS_COLORS = { "潜在": "#536471", "跟进中": "#1d9bf0", "已邀约": "#9333ea", "已面试": "#f59e0b", "已录用": "#00ba7c", "不合适": "#f4212e", "已归档": "#8b98a5", "待审核": "#f59e0b", "已同意": "#00ba7c", "已拒绝": "#f4212e" };
 const RATINGS = ["A", "B", "C", "D"];
-const RATING_COLORS = { A: "#15803d", B: "#2f6fed", C: "#d97706", D: "#98a19c" };
+const RATING_COLORS = { A: "#00ba7c", B: "#1d9bf0", C: "#f59e0b", D: "#98a5af" };
 const EDU_OPTIONS = ["初中", "高中", "中专", "大专", "本科", "硕士", "博士", "博士后"];
-const AVATAR_COLORS = ["#0f766e", "#b45309", "#4f46e5", "#be185d", "#15803d", "#0369a1", "#7c3aed", "#c2410c"];
-const CHART_COLORS = ["#0f766e", "#e8b04b", "#2f6fed", "#d97706", "#15803d", "#7c5cfc", "#0ea5a3", "#be3455", "#8a94a6"];
+const AVATAR_COLORS = ["#1d9bf0", "#f59e0b", "#7856ff", "#f4212e", "#00ba7c", "#ff7a00", "#794bc4", "#00a06a"];
+const CHART_COLORS = ["#1d9bf0", "#0f1419", "#f59e0b", "#00ba7c", "#7856ff", "#f4212e", "#ff7a00", "#794bc4", "#00d5c0"];
+const TOOLTIP = { backgroundColor: "#0f1419", borderWidth: 0, textStyle: { color: "#f7f9f9", fontSize: 12 } };
 
 const FORM_FIELDS = [
   { key: "name", label: "姓名 *", type: "text", req: true },
@@ -60,9 +61,19 @@ function esc(v) {
 }
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, opts);
+  const o = { ...opts };
+  const token = sessionStorage.getItem("th_token");
+  if (token) {
+    o.headers = Object.assign({}, o.headers, { Authorization: `Bearer ${token}` });
+  }
+  const res = await fetch(path, o);
   let body = null;
   try { body = await res.json(); } catch (_) { /* 非 JSON 响应 */ }
+  if (res.status === 401 && body && body.detail === "locked") {
+    sessionStorage.removeItem("th_token");
+    showLockScreen();
+    throw new Error("屏幕已锁定，请输入密码解锁");
+  }
   if (!res.ok) {
     const detail = body && (body.detail || body.message) || `HTTP ${res.status}`;
     throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
@@ -117,10 +128,12 @@ function buildForm(container, values = {}, fields = FORM_FIELDS) {
   container.innerHTML = fields.map(f => {
     const v = values[f.key] ?? "";
     const wide = f.wide ? " wide" : "";
+    const opts = f.key === "status" ? STATUSES : f.options;   // 状态跟随自定义配置
     if (f.type === "select") {
       return `<div class="fg-item${wide}"><label for="ff-${f.key}">${f.label}</label>
         <select id="ff-${f.key}" data-key="${f.key}" class="input">
-        ${f.options.map(o => `<option value="${esc(o)}" ${String(v) === o ? "selected" : ""}>${esc(o) || "—"}</option>`).join("")}
+        ${opts.map(o => `<option value="${esc(o)}" ${String(v) === o ? "selected" : ""}>${esc(o) || "—"}</option>`).join("")}
+        ${opts.includes(v) || !v ? "" : `<option value="${esc(v)}" selected>${esc(v)}</option>`}
         </select></div>`;
     }
     if (f.type === "textarea") {
@@ -151,7 +164,7 @@ function ratingBadge(r) {
 }
 
 function statusPill(s) {
-  return `<span class="pill st-${esc(s || "潜在")}">${esc(s || "潜在")}</span>`;
+  return `<span class="pill st-${esc(s || STATUSES[0])}">${esc(s || STATUSES[0])}</span>`;
 }
 
 function skillTags(str, max = 3) {
@@ -182,9 +195,10 @@ const state = {
 const VIEW_TITLES = {
   dashboard: ["仪表盘", "人才结构一眼看清"],
   talents: ["人才库", "精准管理潜在人才"],
+  applications: ["投递审核", "候选人投递 · 同意入选 / 拒绝"],
   import: ["导入中心", "简历自动提取 · 表格合并导入"],
   data: ["数据管理", "导出 / 备份 / 合并 / 日志"],
-  settings: ["系统设置", "端口 · OCR · 服务"],
+  settings: ["系统设置", "端口 · AI · 锁屏 · 版权"],
 };
 
 function route() {
@@ -195,7 +209,7 @@ function route() {
   $$(".view").forEach(v => { v.hidden = v.id !== `view-${state.view}`; });
   $("#page-title").textContent = VIEW_TITLES[state.view][0];
   $("#page-sub").textContent = VIEW_TITLES[state.view][1];
-  const loaders = { dashboard: loadDashboard, talents: loadTalents, data: loadDataView, settings: loadSettings };
+  const loaders = { dashboard: loadDashboard, talents: loadTalents, applications: loadApplications, data: loadDataView, settings: loadSettings };
   (loaders[state.view] || (() => {}))();
   $("#content").scrollTop = 0;
 }
@@ -215,9 +229,9 @@ function chartBase(extra = {}) {
   return Object.assign({
     color: CHART_COLORS,
     animationDuration: 650,
-    textStyle: { fontFamily: "PingFang SC, Microsoft YaHei, sans-serif" },
-    toolbox: { feature: { saveAsImage: { title: "存为图片", pixelRatio: 2 } }, right: 6, top: 0, iconStyle: { borderColor: "#8a928d" } },
-    tooltip: { trigger: "item", backgroundColor: "#14231f", borderWidth: 0, textStyle: { color: "#eef4ef", fontSize: 12 } },
+    textStyle: { fontFamily: "-apple-system, PingFang SC, Microsoft YaHei, sans-serif" },
+    toolbox: { feature: { saveAsImage: { title: "存为图片", pixelRatio: 2 } }, right: 6, top: 0, iconStyle: { borderColor: "#536471" } },
+    tooltip: { trigger: "item", backgroundColor: "#0f1419", borderWidth: 0, textStyle: { color: "#f7f9f9", fontSize: 12 } },
   }, extra);
 }
 
@@ -227,7 +241,7 @@ async function loadDashboard() {
   catch (e) { toast(e.message, "err", "统计加载失败"); return; }
 
   const cards = [
-    { label: "人才总数", value: s.total, unit: "人", color: "#0f766e", sub: `累计入库候选人`, icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>` },
+    { label: "人才总数", value: s.total, unit: "人", color: "#1d9bf0", sub: `累计入库候选人`, icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>` },
     { label: "本月新增", value: s.month_new, unit: "人", color: "#d97706", sub: s.total ? `占总量 <b>${Math.round(s.month_new / s.total * 100)}%</b>` : "—" , icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>` },
     { label: "高潜人才 (A/B)", value: s.high_potential, unit: "人", color: "#15803d", sub: s.total ? `占比 <b>${Math.round(s.high_potential / s.total * 100)}%</b>，优先跟进` : "评级后自动统计", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>` },
     { label: "跟进中", value: s.following, unit: "人", color: "#2f6fed", sub: `状态为「跟进中」待推进`, icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>` },
@@ -246,11 +260,11 @@ async function loadDashboard() {
   const trend = chart("chart-trend");
   trend && trend.setOption(chartBase({
     grid: { left: 40, right: 20, top: 30, bottom: 28 },
-    tooltip: { trigger: "axis", backgroundColor: "#14231f", borderWidth: 0, textStyle: { color: "#eef4ef", fontSize: 12 }, valueFormatter: v => `${v} 人` },
-    xAxis: { type: "category", data: s.monthly_trend.map(m => m.month.slice(2).replace("-", "/")), axisLine: { lineStyle: { color: "#d5d1c4" } }, axisLabel: { color: "#8a928d", fontSize: 11 } },
-    yAxis: { type: "value", minInterval: 1, name: "人", nameTextStyle: { color: "#8a928d" }, splitLine: { lineStyle: { color: "#eeece4" } }, axisLabel: { color: "#8a928d" } },
-    series: [{ type: "line", data: s.monthly_trend.map(m => m.count), smooth: true, symbol: "circle", symbolSize: 6, lineStyle: { width: 2.5, color: "#0f766e" }, itemStyle: { color: "#0f766e" },
-      areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: "rgba(15,118,110,.22)" }, { offset: 1, color: "rgba(15,118,110,.02)" }]) } }],
+    tooltip: { trigger: "axis", backgroundColor: "#0f1419", borderWidth: 0, textStyle: { color: "#f7f9f9", fontSize: 12 }, valueFormatter: v => `${v} 人` },
+    xAxis: { type: "category", data: s.monthly_trend.map(m => m.month.slice(2).replace("-", "/")), axisLine: { lineStyle: { color: "#eff3f4" } }, axisLabel: { color: "#536471", fontSize: 11 } },
+    yAxis: { type: "value", minInterval: 1, name: "人", nameTextStyle: { color: "#536471" }, splitLine: { lineStyle: { color: "#eff3f4" } }, axisLabel: { color: "#536471" } },
+    series: [{ type: "line", data: s.monthly_trend.map(m => m.count), smooth: true, symbol: "circle", symbolSize: 6, lineStyle: { width: 2.5, color: "#1d9bf0" }, itemStyle: { color: "#1d9bf0" },
+      areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: "rgba(29,155,240,.22)" }, { offset: 1, color: "rgba(29,155,240,.02)" }]) } }],
   }), true);
   if (noData) { $("#trend-insight").textContent = emptyTip; }
   else {
@@ -263,8 +277,8 @@ async function loadDashboard() {
   /* 学历 donut */
   const edu = chart("chart-edu");
   edu && edu.setOption(chartBase({
-    tooltip: { trigger: "item", backgroundColor: "#14231f", borderWidth: 0, textStyle: { color: "#eef4ef", fontSize: 12 }, formatter: p => `${p.name}：${p.value} 人（${p.percent}%）` },
-    legend: { orient: "vertical", right: 8, top: "center", itemWidth: 10, itemHeight: 10, textStyle: { color: "#4c5a55", fontSize: 12 } },
+    tooltip: { trigger: "item", backgroundColor: "#0f1419", borderWidth: 0, textStyle: { color: "#f7f9f9", fontSize: 12 }, formatter: p => `${p.name}：${p.value} 人（${p.percent}%）` },
+    legend: { orient: "vertical", right: 8, top: "center", itemWidth: 10, itemHeight: 10, textStyle: { color: "#38444d", fontSize: 12 } },
     series: [{ type: "pie", radius: ["46%", "72%"], center: ["38%", "52%"], data: s.by_education,
       label: { show: false }, emphasis: { label: { show: true, fontSize: 15, fontWeight: 700, formatter: "{b}\n{c} 人" } },
       itemStyle: { borderRadius: 6, borderColor: "#fff", borderWidth: 2 } }],
@@ -281,34 +295,34 @@ async function loadDashboard() {
   const stData = s.by_status.filter(x => x.value > 0);
   st && st.setOption(chartBase({
     grid: { left: 8, right: 44, top: 10, bottom: 8, containLabel: true },
-    tooltip: { trigger: "item", backgroundColor: "#14231f", borderWidth: 0, textStyle: { color: "#eef4ef", fontSize: 12 }, formatter: p => `${p.name}：${p.value} 人` },
+    tooltip: { trigger: "item", backgroundColor: "#0f1419", borderWidth: 0, textStyle: { color: "#f7f9f9", fontSize: 12 }, formatter: p => `${p.name}：${p.value} 人` },
     xAxis: { type: "value", show: false, minInterval: 1 },
-    yAxis: { type: "category", data: stData.map(x => x.name).reverse(), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#4c5a55", fontSize: 12 } },
+    yAxis: { type: "category", data: stData.map(x => x.name).reverse(), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#38444d", fontSize: 12 } },
     toolbox: { show: false },
-    series: [{ type: "bar", data: stData.map(x => ({ value: x.value, itemStyle: { color: STATUS_COLORS[x.name] || "#0f766e" } })).reverse(),
-      barWidth: 14, itemStyle: { borderRadius: [0, 7, 7, 0] }, label: { show: true, position: "right", color: "#4c5a55", fontSize: 11, formatter: "{c} 人" } }],
+    series: [{ type: "bar", data: stData.map(x => ({ value: x.value, itemStyle: { color: STATUS_COLORS[x.name] || "#1d9bf0" } })).reverse(),
+      barWidth: 14, itemStyle: { borderRadius: [0, 7, 7, 0] }, label: { show: true, position: "right", color: "#38444d", fontSize: 11, formatter: "{c} 人" } }],
   }), true);
 
   /* 技能 TOP10 */
   const sk = chart("chart-skills");
   sk && sk.setOption(chartBase({
     grid: { left: 8, right: 44, top: 10, bottom: 8, containLabel: true },
-    tooltip: { trigger: "item", backgroundColor: "#14231f", borderWidth: 0, textStyle: { color: "#eef4ef", fontSize: 12 }, formatter: p => `${p.name}：${p.value} 人次` },
+    tooltip: { trigger: "item", backgroundColor: "#0f1419", borderWidth: 0, textStyle: { color: "#f7f9f9", fontSize: 12 }, formatter: p => `${p.name}：${p.value} 人次` },
     xAxis: { type: "value", show: false, minInterval: 1 },
-    yAxis: { type: "category", data: s.top_skills.map(x => x.name).reverse(), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#4c5a55", fontSize: 11.5, width: 90, overflow: "truncate" } },
+    yAxis: { type: "category", data: s.top_skills.map(x => x.name).reverse(), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#38444d", fontSize: 11.5, width: 90, overflow: "truncate" } },
     toolbox: { show: false },
     series: [{ type: "bar", data: s.top_skills.map(x => x.value).reverse(), barWidth: 12,
-      itemStyle: { borderRadius: [0, 6, 6, 0], color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: "#0f766e" }, { offset: 1, color: "#37a596" }]) },
-      label: { show: true, position: "right", color: "#4c5a55", fontSize: 11, formatter: "{c}" } }],
+      itemStyle: { borderRadius: [0, 6, 6, 0], color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: "#1d9bf0" }, { offset: 1, color: "#71c9f8" }]) },
+      label: { show: true, position: "right", color: "#38444d", fontSize: 11, formatter: "{c}" } }],
   }), true);
 
   /* 来源 */
   const src = chart("chart-source");
   src && src.setOption(chartBase({
-    tooltip: { trigger: "item", backgroundColor: "#14231f", borderWidth: 0, textStyle: { color: "#eef4ef", fontSize: 12 }, formatter: p => `${p.name}：${p.value} 人（${p.percent}%）` },
+    tooltip: { trigger: "item", backgroundColor: "#0f1419", borderWidth: 0, textStyle: { color: "#f7f9f9", fontSize: 12 }, formatter: p => `${p.name}：${p.value} 人（${p.percent}%）` },
     toolbox: { show: false },
     series: [{ type: "pie", radius: ["30%", "68%"], roseType: s.by_source.length > 3 ? "radius" : false, data: s.by_source,
-      label: { color: "#4c5a55", fontSize: 11, formatter: "{b}\n{c}人" }, labelLine: { length: 8, length2: 8 },
+      label: { color: "#38444d", fontSize: 11, formatter: "{b}\n{c}人" }, labelLine: { length: 8, length2: 8 },
       itemStyle: { borderRadius: 5, borderColor: "#fff", borderWidth: 2 } }],
   }), true);
 
@@ -363,24 +377,40 @@ async function loadTalents() {
       <td><div class="person" data-open="${t.id}">
         <span class="avatar" style="background:${avatarColor(t.name || t.id)}">${esc((t.name || "?").slice(0, 1))}</span>
         <span><span class="p-name">${esc(t.name || "未命名")}</span><br>
-        <span class="p-title">${esc(t.current_title || t.expected_title || "")}</span></span>
+        <span class="p-meta">${esc([t.gender, t.age ? t.age + "岁" : "", t.city].filter(Boolean).join(" · ") || t.current_title || t.expected_title || "")}</span></span>
+        ${hoverCard(t)}
       </div></td>
-      <td><div class="contact-line">${esc(t.phone || "—")}${t.email ? `<br><span class="sub">${esc(t.email)}</span>` : ""}</div></td>
-      <td>${esc(t.education || "—")}<br><span class="muted" style="font-size:11.5px">${esc(t.school || "")}</span></td>
+      <td><div class="contact-line">${esc(t.phone || "—")}${t.email ? `<br><span class="sub">${esc(t.email)}</span>` : ""}${t.wechat ? `<br><span class="sub">微信 ${esc(t.wechat)}</span>` : ""}</div></td>
+      <td>${esc(t.education || "—")}<br><span class="muted" style="font-size:11.5px">${esc(t.school || "")}${t.graduate_year ? " · " + esc(t.graduate_year) : ""}</span></td>
       <td class="num">${t.work_years != null ? esc(t.work_years) + " 年" : "—"}</td>
       <td>${skillTags(t.skills)}</td>
       <td><select class="status-select st-${esc(t.status)}" data-status-id="${t.id}" aria-label="状态">
-        ${STATUSES.map(s => `<option ${s === t.status ? "selected" : ""}>${s}</option>`).join("")}</select></td>
+        ${STATUSES.map(s => `<option ${s === t.status ? "selected" : ""}>${s}</option>`).join("")}${STATUSES.includes(t.status) || !t.status ? "" : `<option selected>${esc(t.status)}</option>`}</select></td>
       <td>${ratingBadge(t.rating)}</td>
       <td class="muted" style="font-size:12px">${esc(t.source || "—")}</td>
       <td class="muted" style="font-size:12px;font-variant-numeric:tabular-nums">${esc(shortDate(t.created_at))}</td>
       <td><div class="ops">
         <button class="icon-btn" data-open="${t.id}" title="详情 / 编辑">✎</button>
+        ${t.stored_path ? `<button class="icon-btn" data-preview-file="${t.id}" title="在线预览简历">👁</button>` : ""}
         ${t.stored_path ? `<a class="icon-btn" href="/api/files/${t.id}" title="下载原件" download>⤓</a>` : ""}
         <button class="icon-btn danger" data-del="${t.id}" data-name="${esc(t.name)}" title="删除">🗑</button>
       </div></td>
     </tr>`).join("");
   renderPager(data);
+}
+
+/* 行悬停预览卡：不点开抽屉也能看到关键信息 */
+function hoverCard(t) {
+  const rows = [
+    ["当前", [t.current_company, t.current_title].filter(Boolean).join(" · ")],
+    ["期望", [t.expected_title, t.expected_salary].filter(Boolean).join(" · ")],
+    ["教育", [t.school, t.major, t.education].filter(Boolean).join(" · ")],
+    ["证书", t.certificates], ["语言", t.languages], ["标签", t.tags],
+    ["简介", t.summary],
+  ].filter(([, v]) => v);
+  if (!rows.length) return "";
+  return `<div class="hover-card">${rows.map(([k, v]) =>
+    `<div class="hc-row"><span class="hc-k">${k}</span><span class="hc-v">${esc(v)}</span></div>`).join("")}</div>`;
 }
 
 function renderPager(data) {
@@ -421,6 +451,8 @@ async function batchOp(action, value) {
 
 /* 人才表事件（委托） */
 $("#talent-tbody").addEventListener("click", async e => {
+  const pv = e.target.closest("[data-preview-file]");
+  if (pv) { openFilePreview(`/api/files/${pv.dataset.previewFile}?inline=1`, "简历预览"); return; }
   const open = e.target.closest("[data-open]");
   if (open) { openDrawer(Number(open.dataset.open)); return; }
   const del = e.target.closest("[data-del]");
@@ -520,13 +552,64 @@ function closeDrawer() {
 }
 $("#d-close").addEventListener("click", closeDrawer);
 $("#drawer-mask").addEventListener("click", closeDrawer);
-document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawer(); closeModal(); } });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawer(); closeModal(); closeFilePreview(); } });
 
 function switchDtab(name) {
   $$(".dtab").forEach(b => b.classList.toggle("active", b.dataset.dtab === name));
   $$(".dtab-panel").forEach(p => { p.hidden = p.id !== `dtab-${name}`; });
+  if (name === "preview") renderDrawerPreview();
 }
 $$(".dtab").forEach(b => b.addEventListener("click", () => switchDtab(b.dataset.dtab)));
+
+/* 抽屉「简历预览」页签：PDF/图片在线预览，其它格式给下载引导 */
+function renderDrawerPreview() {
+  const t = state.currentTalent;
+  const box = $("#d-preview");
+  if (!t || !t.stored_path) {
+    box.innerHTML = `<div class="preview-fallback">该记录没有关联简历原件。<br>上传的简历文件会自动保留原件（可在「系统设置」开启），手动录入的记录无原件可预览。</div>`;
+    return;
+  }
+  box.innerHTML = filePreviewHtml(`/api/files/${t.id}?inline=1`, t.source_file || "");
+}
+
+/* 通用文件在线预览：PDF → iframe；图片 → img；其它 → 原文/下载引导 */
+function filePreviewHtml(url, fname) {
+  const ext = (fname.split(".").pop() || "").toLowerCase();
+  if (ext === "pdf") return `<iframe src="${esc(url)}" title="简历预览"></iframe>`;
+  if (["png", "jpg", "jpeg", "bmp", "webp", "gif"].includes(ext))
+    return `<img src="${esc(url)}" alt="简历图片预览">`;
+  return `<div class="preview-fallback">「${esc(fname)}」暂不支持窗口内预览（Word/TXT 请看「解析原文」页签）。<br><a class="btn btn-ghost btn-sm" href="${esc(url.replace("?inline=1", ""))}" download>⤓ 下载原件查看</a></div>`;
+}
+
+/* 通用预览弹窗（人才表 👁 / 投递审核共用） */
+let filePreviewEls = null;
+function openFilePreview(url, title) {
+  if (!filePreviewEls) {
+    const mask = document.createElement("div");
+    mask.className = "drawer-mask"; mask.id = "fp-mask";
+    const box = document.createElement("div");
+    box.className = "modal"; box.id = "fp-box";
+    box.style.cssText = "width:min(900px,94vw);height:86vh";
+    box.innerHTML = `<div class="modal-head"><h2 id="fp-title"></h2><button id="fp-close" class="icon-btn" aria-label="关闭">✕</button></div>
+      <div id="fp-body" class="preview-frame" style="flex:1;min-height:0"></div>`;
+    document.body.append(mask, box);
+    $("#fp-close").addEventListener("click", closeFilePreview);
+    mask.addEventListener("click", closeFilePreview);
+    filePreviewEls = { mask, box };
+  }
+  $("#fp-title").textContent = title || "文件预览";
+  $("#fp-body").innerHTML = `<iframe src="${esc(url)}" title="预览"></iframe>`;
+  filePreviewEls.mask.hidden = filePreviewEls.box.hidden = false;
+  requestAnimationFrame(() => filePreviewEls.mask.classList.add("show"));
+}
+function closeFilePreview() {
+  if (!filePreviewEls) return;
+  filePreviewEls.mask.classList.remove("show");
+  setTimeout(() => {
+    filePreviewEls.mask.hidden = filePreviewEls.box.hidden = true;
+    $("#fp-body").innerHTML = "";   // 停止 iframe 加载
+  }, 200);
+}
 
 $("#d-save").addEventListener("click", async () => {
   const t = state.currentTalent; if (!t) return;
@@ -564,7 +647,7 @@ $("#d-note-add").addEventListener("click", async () => {
 
 /* ================= 手动新增 ================= */
 function openModal() {
-  buildForm($("#m-form"), { status: "潜在", source: "手动录入" });
+  buildForm($("#m-form"), { status: STATUSES[0], source: "手动录入" });
   $("#modal-mask").hidden = $("#modal-add").hidden = false;
   requestAnimationFrame(() => $("#modal-mask").classList.add("show"));
   $("#m-form [data-key='name']").focus();
@@ -587,6 +670,106 @@ $("#m-save").addEventListener("click", async () => {
     toast(`已新增「${data.name}」`); closeModal(); loadTalents();
   } catch (e) { toast(e.message, "err"); }
 });
+
+/* ================= 投递审核 ================= */
+const appState = { status: "", page: 1, size: 15, items: [] };
+
+async function loadApplications() {
+  let r;
+  try {
+    r = await api(`/api/applications?status=${encodeURIComponent(appState.status)}&page=${appState.page}&size=${appState.size}`);
+    const sys = await api("/api/system");
+    if (sys.apply_urls && sys.apply_urls.length) {
+      $("#apply-portal-url").textContent = `投递页：${sys.apply_urls[sys.apply_urls.length - 1]}`;
+      $("#btn-open-portal").href = sys.apply_urls[sys.apply_urls.length - 1];
+      $("#btn-open-portal").hidden = false;
+    } else {
+      $("#apply-portal-url").textContent = "投递门户未启用（可在系统设置开启）";
+      $("#btn-open-portal").hidden = true;
+    }
+    updateAppBadge(r.pending);
+  } catch (e) { toast(e.message, "err", "投递列表加载失败"); return; }
+  appState.items = r.items;
+  $("#app-empty").hidden = r.items.length > 0;
+  $("#app-tbody").innerHTML = r.items.map(a => `
+    <tr data-id="${a.id}">
+      <td><div class="person">
+        <span class="avatar" style="background:${avatarColor(a.name || a.id)}">${esc((a.name || "?").slice(0, 1))}</span>
+        <span><span class="p-name">${esc(a.name)}</span><br>
+        <span class="p-meta">${esc(a.cover_letter ? a.cover_letter.slice(0, 26) : "")}</span></span>
+      </div></td>
+      <td><div class="contact-line">${esc(a.phone)}${a.email ? `<br><span class="sub">${esc(a.email)}</span>` : ""}</div></td>
+      <td>${esc(a.expected_title || "—")}</td>
+      <td>${a.referrer ? `<span class="pill st-已邀约">${esc(a.referrer)}</span>` : `<span class="muted">—</span>`}</td>
+      <td>${a.file_name
+        ? `<button class="btn btn-sm btn-ghost" data-app-preview="${a.id}" title="${esc(a.file_name)}">👁 ${esc(a.file_name.length > 12 ? a.file_name.slice(0, 12) + "…" : a.file_name)}</button>`
+        : `<span class="muted">无附件</span>`}</td>
+      <td><span class="pill st-${esc(a.status)}">${esc(a.status)}</span>
+        ${a.status === "已拒绝" && a.reject_reason ? `<br><span class="muted" style="font-size:11.5px">${esc(a.reject_reason)}</span>` : ""}
+        ${a.talent_id ? `<br><a class="link" data-goto-talent="${a.talent_id}" style="font-size:11.5px">已入库 #${a.talent_id}</a>` : ""}</td>
+      <td class="muted" style="font-size:12px;font-variant-numeric:tabular-nums">${esc(a.created_at || "")}</td>
+      <td><div class="ops">
+        ${a.status === "待审核" ? `
+          <button class="btn btn-sm btn-primary" data-app-approve="${a.id}">同意入选</button>
+          <button class="btn btn-sm btn-danger" data-app-reject="${a.id}">拒绝</button>` : `
+          <span class="muted">已处理</span>`}
+      </div></td>
+    </tr>`).join("");
+  renderAppPager(r);
+}
+
+function renderAppPager(data) {
+  const pages = Math.max(1, Math.ceil(data.total / data.size));
+  $("#app-pager").innerHTML = `<span>共 <b>${data.total}</b> 条投递 · 待审核 <b>${data.pending}</b> 条 · 第 ${data.page}/${pages} 页</span>
+    <span class="pages">
+      <button ${data.page <= 1 ? "disabled" : ""} data-apage="${data.page - 1}">‹</button>
+      <button ${data.page >= pages ? "disabled" : ""} data-apage="${data.page + 1}">›</button>
+    </span>`;
+  $$("#app-pager button[data-apage]").forEach(b => b.addEventListener("click", () => {
+    appState.page = Number(b.dataset.apage); loadApplications();
+  }));
+}
+
+function updateAppBadge(pending) {
+  const el = $("#nav-app-badge");
+  el.hidden = !pending;
+  el.textContent = pending > 99 ? "99+" : pending;
+}
+
+$("#app-tbody").addEventListener("click", async e => {
+  const pv = e.target.closest("[data-app-preview]");
+  if (pv) { openFilePreview(`/api/applications/${pv.dataset.appPreview}/file?inline=1`, "投递简历预览"); return; }
+  const gt = e.target.closest("[data-goto-talent]");
+  if (gt) { openDrawer(Number(gt.dataset.gotoTalent)); return; }
+  const ap = e.target.closest("[data-app-approve]");
+  if (ap) {
+    const aid = Number(ap.dataset.appApprove);
+    const ok = await confirmBox("同意入选", "同意后该投递可一键转入人才库（自动解析其简历建档）。继续？", "同意并入库");
+    if (!ok) return;
+    try {
+      await api(`/api/applications/${aid}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "approve" }) });
+      const t = await api(`/api/applications/${aid}/to-talent`, { method: "POST" });
+      const warns = (t._apply_warnings || []);
+      toast(`已同意并转入人才库（#${t.id} ${t.name}）${warns.length ? "；" + warns.join("；") : ""}`, warns.length ? "warn" : "ok");
+      loadApplications();
+    } catch (err) { toast(err.message, "err"); }
+    return;
+  }
+  const rj = e.target.closest("[data-app-reject]");
+  if (rj) {
+    const aid = Number(rj.dataset.appReject);
+    const reason = window.prompt("拒绝原因（投递人查询状态时可见，可留空）：", "暂不匹配");
+    if (reason === null) return;
+    try {
+      await api(`/api/applications/${aid}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reject", reason }) });
+      toast("已拒绝该投递");
+      loadApplications();
+    } catch (err) { toast(err.message, "err"); }
+  }
+});
+$("#a-status").addEventListener("change", e => { appState.status = e.target.value; appState.page = 1; loadApplications(); });
+$("#btn-apply-refresh").addEventListener("click", loadApplications);
+
 
 /* ================= 导入中心 ================= */
 $$(".tab").forEach(tab => tab.addEventListener("click", () => {
@@ -658,7 +841,7 @@ function renderDrafts() {
       <td><select data-f="education" aria-label="学历"><option value=""></option>${EDU_OPTIONS.map(o => `<option ${d.education === o ? "selected" : ""}>${o}</option>`).join("")}</select></td>
       <td><input data-f="expected_title" value="${esc(d.expected_title || d.current_title)}" aria-label="职位"></td>
       <td><select data-f="rating" aria-label="评级"><option value="">—</option>${RATINGS.map(o => `<option ${d.rating === o ? "selected" : ""}>${o}</option>`).join("")}</select></td>
-      <td><select data-f="status" aria-label="状态">${STATUSES.map(o => `<option ${(d.status || "潜在") === o ? "selected" : ""}>${o}</option>`).join("")}</select></td>
+      <td><select data-f="status" aria-label="状态">${STATUSES.map(o => `<option ${(d.status || STATUSES[0]) === o ? "selected" : ""}>${o}</option>`).join("")}</select></td>
       <td><button class="icon-btn" data-preview="${i}" title="查看解析原文">👁</button></td>
     </tr>`).join("");
   $("#draft-zone").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -761,6 +944,15 @@ $("#btn-export-all-xlsx").addEventListener("click", () => { window.location = "/
 $("#btn-export-all-csv").addEventListener("click", () => { window.location = "/api/export/csv"; });
 $("#btn-download-template").addEventListener("click", () => { window.location = "/api/export/template"; });
 $("#btn-export-json").addEventListener("click", () => { window.location = "/api/export/json"; });
+$("#btn-clear-events").addEventListener("click", async () => {
+  const ok = await confirmBox("清空操作日志", "将删除全部操作日志记录（人才数据不受影响）。继续？", "清空");
+  if (!ok) return;
+  try {
+    const r = await api("/api/events", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+    toast(`已删除 ${r.deleted} 条日志`);
+    loadDataView();
+  } catch (e) { toast(e.message, "err"); }
+});
 $("#file-json").addEventListener("change", async e => {
   const file = e.target.files[0]; e.target.value = "";
   if (!file) return;
@@ -781,6 +973,11 @@ async function loadSettings() {
     const form = $("#settings-form");
     $$("input[name='host']", form).forEach(r => { r.checked = r.value === cfg.host; });
     form.port.value = cfg.port;
+    form.apply_port.value = cfg.apply_port ?? 8301;
+    form.apply_enabled.checked = !!cfg.apply_enabled;
+    form.apply_captcha_disabled.checked = !!cfg.apply_captcha_disabled;
+    form.apply_company_name.value = cfg.apply_company_name || "";
+    form.custom_statuses.value = cfg.custom_statuses || "";
     form.auto_open_browser.checked = !!cfg.auto_open_browser;
     form.ocr_enabled.checked = !!cfg.ocr_enabled;
     form.ocr_max_pages.value = cfg.ocr_max_pages;
@@ -793,25 +990,216 @@ async function loadSettings() {
         ${sys.ocr.load_error ? `<br><span style="color:var(--danger)">${esc(sys.ocr.load_error)}</span>` : ""}</span></div>
       <div class="si-row"><span class="si-k">监听</span><span class="si-v">${esc(sys.host)}:${sys.port} ${sys.open_to_lan ? '<span class="pill st-已录用">端口已开放</span>' : '<span class="pill st-潜在">仅本机</span>'}</span></div>`;
     $("#sys-urls").innerHTML = sys.urls.map((u, i) =>
-      `<div class="si-row"><span class="si-k">${i === 0 ? "本机访问" : "局域网访问"}</span><span class="si-v"><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a></span></div>`).join("");
+      `<div class="si-row"><span class="si-k">${i === 0 ? "本机访问" : "局域网访问"}</span><span class="si-v"><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a></span></div>`).join("")
+      + (sys.apply_urls || []).map((u, i) =>
+      `<div class="si-row"><span class="si-k">${i === 0 ? "投递页(本机)" : "投递页(局域网)"}</span><span class="si-v"><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a></span></div>`).join("");
+    /* 版权信息 */
+    const cr = sys.copyright || {};
+    $("#about-box").innerHTML = `<b>${esc(cr.owner || "")}</b> · ${esc(cr.author || "")} 开发<br>
+      ${esc(cr.notice || "")}<br>
+      联系：📞 ${esc(cr.phone || "")} · ✉️ <a href="mailto:${esc(cr.email || "")}">${esc(cr.email || "")}</a><br>
+      商业使用请先书面申请授权。版本 v${esc(sys.version)}`;
+    /* 锁屏面板 */
+    loadLockPanel();
     /* AI 面板 */
-    const llmForm = $("#llm-form");
-    llmForm.llm_enabled.checked = !!cfg.llm_enabled;
-    llmForm.llm_min_confidence.value = cfg.llm_min_confidence ?? 0.75;
-    const L = sys.llm || {};
-    $("#llm-badge").innerHTML = L.enabled
-      ? `<span class="llm-on">● AI 就绪${L.loaded ? "（模型已加载）" : ""}</span>`
-      : `<span class="llm-off">● AI 未启用</span>`;
+    await loadAiPanel(cfg, sys);
+  } catch (e) { toast(e.message, "err", "设置加载失败"); }
+}
+
+/* ---- 锁屏管理面板 ---- */
+async function loadLockPanel() {
+  try {
+    const st = await api("/api/auth/status");
+    $("#lock-badge").innerHTML = st.enabled
+      ? `<span class="llm-on">● 已开启保护</span>` : `<span class="llm-off">● 未开启</span>`;
+    $("#lock-setup-box").hidden = st.set;
+    $("#lock-manage-box").hidden = !st.set;
+    $("#btn-lock-top").hidden = !st.enabled;
+    if (st.set) {
+      $("#lock-auto2").value = st.auto_lock_minutes;
+      $("#lock-forgot-hint").textContent = "💡 " + (st.forgot_hint || "");
+    }
+    $("#lock-forgot").textContent = "💡 " + (st.forgot_hint || "");
+  } catch (_) { /* 状态查询失败不打断设置页 */ }
+}
+
+$("#btn-lock-setup").addEventListener("click", async () => {
+  const p1 = $("#lock-p1").value, p2 = $("#lock-p2").value;
+  if (p1.length < 6) { toast("密码至少 6 位", "err"); return; }
+  if (p1 !== p2) { toast("两次输入的密码不一致", "err"); return; }
+  try {
+    await api("/api/auth/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: p1, auto_lock_minutes: Number($("#lock-auto").value) || 30 }) });
+    toast("锁屏已启用，数据已受密码保护");
+    $("#lock-p1").value = $("#lock-p2").value = "";
+    loadLockPanel();
+  } catch (e) { toast(e.message, "err"); }
+});
+$("#btn-lock-change").addEventListener("click", async () => {
+  const oldp = $("#lock-old").value, newp = $("#lock-new").value;
+  if (!oldp) { toast("请输入原密码", "err"); return; }
+  if (newp && newp.length < 6) { toast("新密码至少 6 位", "err"); return; }
+  try {
+    await api("/api/auth/change", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ old_password: oldp, new_password: newp || oldp, auto_lock_minutes: Number($("#lock-auto2").value) }) });
+    toast("锁屏设置已更新");
+    $("#lock-old").value = $("#lock-new").value = "";
+    loadLockPanel();
+  } catch (e) { toast(e.message, "err"); }
+});
+$("#btn-lock-disable").addEventListener("click", async () => {
+  const p = $("#lock-old").value || window.prompt("请输入当前锁屏密码以关闭：");
+  if (!p) return;
+  try {
+    await api("/api/auth/disable", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: p }) });
+    toast("锁屏已关闭");
+    $("#lock-old").value = "";
+    loadLockPanel();
+  } catch (e) { toast(e.message, "err"); }
+});
+
+/* ---- 锁屏覆盖层 + 自动锁定 ---- */
+function showLockScreen() {
+  $("#lock-screen").hidden = false;
+  $("#lock-err").textContent = "";
+  $("#lock-pass").value = "";
+  setTimeout(() => $("#lock-pass").focus(), 60);
+}
+async function doUnlock() {
+  const p = $("#lock-pass").value;
+  if (!p) { $("#lock-err").textContent = "请输入密码"; return; }
+  try {
+    const r = await fetch("/api/auth/unlock", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: p }) });
+    const body = await r.json();
+    if (!r.ok) { $("#lock-err").textContent = body.detail || "解锁失败"; return; }
+    sessionStorage.setItem("th_token", body.token);
+    $("#lock-screen").hidden = true;
+    startAutoLock(body.auto_lock_minutes);
+    toast("已解锁");
+    route();   // 重新拉取当前视图数据
+  } catch (e) { $("#lock-err").textContent = e.message; }
+}
+$("#lock-unlock").addEventListener("click", doUnlock);
+$("#lock-pass").addEventListener("keydown", e => { if (e.key === "Enter") doUnlock(); });
+$("#btn-lock-top").addEventListener("click", () => {
+  sessionStorage.removeItem("th_token");
+  showLockScreen();
+});
+
+let autoLockTimer = null;
+function startAutoLock(minutes) {
+  if (autoLockTimer) { clearTimeout(autoLockTimer); autoLockTimer = null; }
+  if (!minutes || minutes <= 0) return;
+  const reset = () => {
+    if (autoLockTimer) clearTimeout(autoLockTimer);
+    autoLockTimer = setTimeout(() => {
+      if (!$("#lock-screen").hidden) return;
+      sessionStorage.removeItem("th_token");
+      showLockScreen();
+      toast(`${minutes} 分钟无操作，屏幕已自动锁定`, "warn");
+    }, minutes * 60_000);
+  };
+  ["click", "keydown", "pointerdown", "scroll"].forEach(ev => document.addEventListener(ev, reset, { passive: true }));
+  reset();
+}
+
+/* ---- AI 面板（本地模型 / 外部 API 双引擎） ---- */
+let aiCfgCache = null;
+async function loadAiPanel(cfg, sys) {
+  aiCfgCache = cfg;
+  const llmForm = $("#llm-form");
+  const mode = cfg.llm_engine === "api" ? "api" : "local";
+  switchEngineUi(mode);
+  llmForm.llm_enabled.checked = !!cfg.llm_enabled;
+  llmForm.llm_enabled_api.checked = !!cfg.llm_enabled;
+  llmForm.llm_min_confidence.value = cfg.llm_min_confidence ?? 0.75;
+  llmForm.llm_gpu_layers.value = cfg.llm_gpu_layers ?? 0;
+  llmForm.llm_api_base.value = cfg.llm_api_base || "";
+  llmForm.llm_api_key.value = cfg.llm_api_key || "";
+  llmForm.llm_api_model.value = cfg.llm_api_model || "";
+  const L = sys.llm || {};
+  $("#llm-badge").innerHTML = L.enabled
+    ? `<span class="llm-on">● AI 就绪（${L.mode === "api" ? "外部API" : "本地模型"}）</span>`
+    : `<span class="llm-off">● AI 未启用</span>`;
+  if (L.mode === "api") {
+    $("#llm-status").innerHTML = `引擎：${esc(L.engine || "-")}<br>状态：${L.enabled ? `<span style="color:var(--ok)">可用</span>` : `<span style="color:var(--danger)">配置不完整</span>`}`;
+  } else {
     let why = "";
     if (!L.installed) why = "llama-cpp-python 未安装（见 README「AI 智能解析」）";
-    else if (!L.model_found) why = "未找到模型文件——在下方选择一个模型下载，或手动放入模型目录";
+    else if (!L.model_found) why = "未找到模型文件——在下方选择模型下载，或手动放入模型目录";
     $("#llm-status").innerHTML = `
       引擎：${esc(L.engine || "-")}<br>
       状态：${L.enabled ? `<span style="color:var(--ok)">可用</span>` : `<span style="color:var(--muted)">不可用</span>`}${why ? `（${esc(why)}）` : ""}<br>
       模型：${esc(L.model_name || "（未安装）")}${L.load_error ? `<br><span style="color:var(--danger)">${esc(L.load_error)}</span>` : ""}`;
-    loadModelPanel();
-  } catch (e) { toast(e.message, "err", "设置加载失败"); }
+  }
+  /* 内存/GPU 建议 */
+  try {
+    const res = await api("/api/system/resources");
+    const ramGb = (res.ram.total_mb / 1024).toFixed(1);
+    const availGb = (res.ram.available_mb / 1024).toFixed(1);
+    const gpuHtml = res.gpu.available
+      ? `<span class="gpu-badge">GPU ${esc(res.gpu.name)} · ${Math.round(res.gpu.vram_mb / 1024)}GB 显存</span>`
+      : "";
+    $("#ram-hint").innerHTML = `📊 本机内存 <b>${ramGb}GB</b>（当前可用 <b>${availGb}GB</b>）${gpuHtml}<br>💡 ${esc(res.recommend.reason)}${res.recommend.model_id ? "（下方下载已默认为你选好推荐档）" : ""}<br>
+      <span style="opacity:.8">${esc(res.gpu.hint || "")}</span>`;
+    if (res.recommend.model_id) {
+      const sel = $("#dl-model");
+      if (sel && [...sel.options].some(o => o.value === res.recommend.model_id && !o.disabled)) sel.value = res.recommend.model_id;
+      fillSourceSelect();
+    }
+  } catch (_) { $("#ram-hint").textContent = ""; }
+  loadModelPanel();
 }
+
+function switchEngineUi(mode) {
+  $("#engine-local").classList.toggle("on", mode === "local");
+  $("#engine-api").classList.toggle("on", mode === "api");
+  $("#llm-local-box").hidden = mode !== "local";
+  $("#llm-api-box").hidden = mode !== "api";
+  $("#dl-model").closest(".card").style.opacity = mode === "local" ? "1" : ".45";
+}
+let curEngine = "local";
+$("#engine-local").addEventListener("click", () => { curEngine = "local"; switchEngineUi("local"); });
+$("#engine-api").addEventListener("click", () => { curEngine = "api"; switchEngineUi("api"); });
+
+$("#btn-save-llm").addEventListener("click", async () => {
+  const f = $("#llm-form");
+  const mode = $("#engine-api").classList.contains("on") ? "api" : "local";
+  const body = {
+    llm_engine: mode,
+    llm_enabled: mode === "api" ? f.llm_enabled_api.checked : f.llm_enabled.checked,
+    llm_min_confidence: Number(f.llm_min_confidence.value),
+  };
+  if (mode === "api") {
+    body.llm_api_base = f.llm_api_base.value.trim();
+    body.llm_api_model = f.llm_api_model.value.trim();
+    if (f.llm_api_key.value && f.llm_api_key.value !== "******") body.llm_api_key = f.llm_api_key.value.trim();
+    if (!body.llm_api_base || !body.llm_api_model) { toast("请填写 API 地址与模型名", "err"); return; }
+  } else {
+    body.llm_gpu_layers = Number(f.llm_gpu_layers.value || 0);
+  }
+  try {
+    await api("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    toast("AI 设置已保存"); loadSettings();
+  } catch (e) { toast(e.message, "err", "保存失败"); }
+});
+
+$("#btn-test-llm").addEventListener("click", async () => {
+  const btn = $("#btn-test-llm");
+  btn.disabled = true; btn.textContent = "解析中…（本地模型约需 30 秒）";
+  try {
+    const fd = new FormData();
+    const resp = await fetch("samples/张伟-Java开发工程师-8年.pdf");
+    if (!resp.ok) throw new Error("样本文件获取失败");
+    fd.append("files", await resp.blob(), "张伟-Java开发工程师-8年.pdf");
+    fd.append("force_llm", "1");
+    const r = await api("/api/import/resumes", { method: "POST", body: fd });
+    const it = (r.results || [])[0] || {};
+    if (!it.ok) throw new Error(it.error || "解析失败");
+    const d = it.draft;
+    toast(`姓名=${d.name} 电话=${d.phone} 学校=${d.school} 专业=${d.major}（AI增强=${it.llm_used ? "是" : "否"}，置信度 ${Math.round(d.parse_confidence * 100)}%）`, "ok", "AI 解析测试成功");
+  } catch (e) { toast(e.message, "err", "AI 解析测试失败"); }
+  finally { btn.disabled = false; btn.textContent = "测试解析一份样本"; }
+});
 
 /* ---- AI 模型下载面板 ---- */
 let llmModels = [];
@@ -873,14 +1261,6 @@ $("#btn-dl-model").addEventListener("click", async () => {
   } catch (e) { toast(e.message, "err", "下载启动失败"); }
   finally { btn.disabled = false; }
 });
-$("#btn-save-llm").addEventListener("click", async () => {
-  const f = $("#llm-form");
-  try {
-    await api("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ llm_enabled: f.llm_enabled.checked, llm_min_confidence: Number(f.llm_min_confidence.value) }) });
-    toast("AI 设置已保存"); loadSettings();
-  } catch (e) { toast(e.message, "err", "保存失败"); }
-});
 
 $("#btn-save-settings").addEventListener("click", saveSettings);
 $("#btn-restart").addEventListener("click", async () => {
@@ -892,14 +1272,22 @@ async function saveSettings(silent = false) {
   const body = {
     host,
     port: Number(form.port.value),
+    apply_port: Number(form.apply_port.value),
+    apply_enabled: form.apply_enabled.checked,
+    apply_captcha_disabled: form.apply_captcha_disabled.checked,
+    apply_company_name: form.apply_company_name.value.trim(),
+    custom_statuses: form.custom_statuses.value.trim(),
     auto_open_browser: form.auto_open_browser.checked,
     ocr_enabled: form.ocr_enabled.checked,
     ocr_max_pages: Number(form.ocr_max_pages.value),
     upload_keep_original: form.upload_keep_original.checked,
   };
   try {
-    await api("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (!silent) toast("设置已保存（端口/访问范围变更需重启服务生效）");
+    const r = await api("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    /* 自定义状态生效：刷新全局 STATUSES 与所有下拉 */
+    if ("custom_statuses" in body) await refreshStatuses();
+    const needRestart = (r && r.need_restart || []).length > 0;
+    if (!silent) toast(needRestart ? "设置已保存，端口/投递门户变更需点「保存并重启服务」生效" : "设置已保存");
     return true;
   } catch (e) { toast(e.message, "err", "保存失败"); return false; }
 }
@@ -942,21 +1330,55 @@ if (batchUpBtn) {
   });
 }
 
+/* 动态状态列表：自定义状态在设置页保存后全局生效 */
+async function refreshStatuses() {
+  try {
+    const r = await api("/api/statuses");
+    if (Array.isArray(r.statuses) && r.statuses.length) STATUSES = r.statuses;
+  } catch (_) { /* 保持默认 */ }
+  const opts = STATUSES.map(s => `<option>${esc(s)}</option>`).join("");
+  const f = $("#f-status");
+  const cur = f.value;
+  f.innerHTML = `<option value="">全部状态</option>` + opts;
+  f.value = cur;
+  $("#batch-status").innerHTML = opts;
+}
+
 async function initShell() {
-  /* 下拉初始化 */
-  $("#f-status").insertAdjacentHTML("beforeend", STATUSES.map(s => `<option>${s}</option>`).join(""));
-  $("#batch-status").innerHTML = STATUSES.map(s => `<option>${s}</option>`).join("");
+  /* 下拉初始化（状态列表动态拉取，支持自定义状态） */
+  await refreshStatuses();
   $("#f-edu").insertAdjacentHTML("beforeend", EDU_OPTIONS.map(s => `<option>${s}</option>`).join(""));
   try {
-    const sys = await api("/api/system");
+    const [sys, about] = await Promise.all([api("/api/system"), api("/api/about")]);
     $("#server-text").textContent = `服务运行中 v${sys.version}`;
     $("#server-dot .dot").classList.remove("off");
     $("#sidebar-port").textContent = sys.open_to_lan ? `端口 ${sys.port} · 局域网开放` : `端口 ${sys.port} · 仅本机`;
+    const cr = about.copyright || {};
+    $("#sidebar-copyright").innerHTML = `© ${esc(cr.owner || "")}<br>${esc(cr.author || "")} 开发 · 商用需书面授权<br>
+      <a href="mailto:${esc(cr.email || "")}">${esc(cr.email || "")}</a> · ${esc(cr.phone || "")}`;
   } catch (e) {
     $("#server-text").textContent = "无法连接服务";
     $("#server-dot .dot").classList.add("off");
   }
+  /* 锁屏：已启用且本地无有效令牌 → 先锁；有令牌 → 启动自动锁定计时 */
+  try {
+    const st = await api("/api/auth/status");
+    $("#btn-lock-top").hidden = !st.enabled;
+    $("#lock-forgot").textContent = "💡 " + (st.forgot_hint || "");
+    if (st.enabled) {
+      const token = sessionStorage.getItem("th_token");
+      if (!token) { showLockScreen(); return; }
+      startAutoLock(st.auto_lock_minutes);
+    }
+  } catch (_) { /* 锁状态查询失败不阻塞页面 */ }
   route();
+  /* 待审核投递徽标（首屏 + 每 30s 刷新） */
+  const refreshBadge = async () => {
+    try { const r = await api("/api/applications?size=1"); updateAppBadge(r.pending); }
+    catch (_) { /* 锁定或未启用时静默 */ }
+  };
+  refreshBadge();
+  setInterval(refreshBadge, 30_000);
 }
 document.addEventListener("DOMContentLoaded", initShell);
 if (document.readyState !== "loading") initShell();

@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>简历投递 — TalentHub</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231d9bf0'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3ET%3C/text%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f7f9f9; --surface: #fff; --ink: #0f1419; --ink2: #38444d; --muted: #536471;
+  --faint: #8b98a5; --line: #eff3f4; --line2: #cfd9de; --primary: #1d9bf0; --deep: #1a8cd8;
+  --soft: #e8f5fd; --ok: #00ba7c; --oksoft: #e6f9f1; --danger: #f4212e; --dsoft: #ffe6e8;
+  --warn: #f59e0b; --warnsoft: #fef3c7;
+  --r: 16px; --rs: 10px;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --tr: 200ms cubic-bezier(.32,.72,0,1);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
+body { font-family: var(--font); background: var(--bg); color: var(--ink); font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 640px; margin: 0 auto; padding: 24px 16px 80px; }
+.hero { text-align: center; padding: 34px 16px 26px; }
+.hero-logo { width: 64px; height: 64px; border-radius: 20px; margin: 0 auto 18px;
+  background: linear-gradient(145deg, #4ab3f4, #1d9bf0 55%, #1a8cd8); color: #fff;
+  font-weight: 800; font-size: 32px; display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 8px 24px rgba(29,155,240,.35); }
+.hero h1 { font-size: 24px; font-weight: 800; letter-spacing: -.3px; }
+.hero p { color: var(--muted); margin-top: 6px; font-size: 14px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 22px; box-shadow: 0 1px 3px rgba(15,20,25,.05); margin-bottom: 16px; }
+.tabs { display: flex; background: var(--line); border-radius: 99px; padding: 4px; margin-bottom: 20px; }
+.tabs button { flex: 1; border: 0; background: transparent; font-family: inherit; font-size: 14px; font-weight: 600;
+  color: var(--muted); padding: 9px 0; border-radius: 99px; cursor: pointer; transition: all var(--tr); }
+.tabs button.on { background: var(--surface); color: var(--ink); font-weight: 800; box-shadow: 0 1px 4px rgba(15,20,25,.1); }
+.f { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+.f label { font-size: 13px; font-weight: 700; color: var(--ink2); }
+.f label i { color: var(--danger); font-style: normal; }
+.f .tip { font-size: 11.5px; color: var(--faint); font-weight: 400; margin-left: 6px; }
+.f input, .f textarea, .f select { width: 100%; border: 1px solid var(--line2); border-radius: var(--rs);
+  padding: 11px 14px; font-family: inherit; font-size: 14.5px; color: var(--ink); background: var(--surface);
+  transition: border-color var(--tr), box-shadow var(--tr); }
+.f input:focus, .f textarea:focus { outline: 0; border-color: var(--primary); box-shadow: 0 0 0 3.5px rgba(29,155,240,.14); }
+.f textarea { resize: vertical; min-height: 84px; }
+.captcha-row { display: flex; gap: 12px; align-items: flex-end; }
+.captcha-row .f { flex: 1; margin-bottom: 0; }
+.captcha-img { height: 47px; border-radius: var(--rs); border: 1px solid var(--line2); cursor: pointer; background: #fafbfc; }
+.file-drop { border: 2px dashed var(--line2); border-radius: var(--rs); padding: 22px; text-align: center; cursor: pointer;
+  color: var(--muted); font-size: 13.5px; transition: all var(--tr); background: var(--bg); }
+.file-drop:hover, .file-drop.over { border-color: var(--primary); background: var(--soft); }
+.file-drop b { color: var(--primary); }
+.file-drop .fname { color: var(--ok); font-weight: 700; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%;
+  border: 0; border-radius: 99px; padding: 13px; font-family: inherit; font-size: 15.5px; font-weight: 800;
+  cursor: pointer; transition: all var(--tr); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: var(--primary); color: #fff; box-shadow: 0 3px 12px rgba(29,155,240,.3); }
+.btn-primary:hover:not(:disabled) { background: var(--deep); }
+.btn-primary:active:not(:disabled) { transform: scale(.98); }
+.btn-ghost { background: var(--surface); border: 1px solid var(--line2); color: var(--ink); }
+.btn-ghost:hover { background: var(--bg); }
+.result { border-radius: var(--r); padding: 20px; text-align: center; }
+.result.ok { background: var(--oksoft); }
+.result .big { font-size: 40px; }
+.result h3 { font-size: 18px; margin: 8px 0 4px; }
+.result p { color: var(--muted); font-size: 13.5px; }
+.code-box { background: var(--surface); border: 2px dashed var(--primary); border-radius: var(--rs);
+  padding: 12px; margin: 14px 0; font-size: 22px; font-weight: 800; letter-spacing: 5px; color: var(--deep);
+  font-variant-numeric: tabular-nums; cursor: pointer; }
+.warn-box { background: var(--warnsoft); border-radius: var(--rs); padding: 10px 14px; font-size: 12.5px; color: #92600a; margin-top: 12px; text-align: left; }
+.status-card { border-radius: var(--r); padding: 20px; margin-top: 14px; }
+.status-card.待审核 { background: var(--warnsoft); }
+.status-card.已同意 { background: var(--oksoft); }
+.status-card.已拒绝 { background: var(--dsoft); }
+.status-card h3 { font-size: 17px; }
+.status-card .st-line { font-size: 13.5px; color: var(--ink2); margin-top: 6px; line-height: 1.8; }
+.msg { min-height: 20px; font-size: 13px; margin-top: 10px; }
+.msg.err { color: var(--danger); }
+.msg.ok { color: var(--ok); }
+.foot { text-align: center; color: var(--faint); font-size: 11.5px; line-height: 1.9; margin-top: 28px; }
+.foot a { color: var(--primary); text-decoration: none; }
+@media (max-width: 480px) { .wrap { padding: 12px 12px 60px; } .card { padding: 18px 16px; } .hero { padding: 22px 8px 18px; } .hero h1 { font-size: 21px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <div class="hero-logo">T</div>
+    <h1 id="company-name">企业简历投递</h1>
+    <p id="hero-sub">投递后可随时凭「手机号 + 查询码」查看进度、修改资料</p>
+  </div>
+
+  <div class="tabs">
+    <button id="tab-btn-submit" class="on">投递简历</button>
+    <button id="tab-btn-query">查询 / 修改</button>
+  </div>
+
+  <!-- 投递表单 -->
+  <div id="panel-submit" class="card">
+    <div class="f"><label>姓名 <i>*</i></label><input id="s-name" maxlength="30" placeholder="真实姓名" autocomplete="name"></div>
+    <div class="f"><label>手机号 <i>*</i><span class="tip">用于查询投递进度</span></label>
+      <input id="s-phone" maxlength="11" inputmode="numeric" placeholder="11 位手机号" autocomplete="tel"></div>
+    <div class="f"><label>邮箱</label><input id="s-email" type="email" maxlength="100" placeholder="选填，便于接收通知" autocomplete="email"></div>
+    <div class="f"><label>期望职位</label><input id="s-title" maxlength="60" placeholder="如：机械设计工程师"></div>
+    <div class="f"><label>推荐人<span class="tip">内部推荐请填写推荐人姓名</span></label>
+      <input id="s-referrer" maxlength="30" placeholder="选填，如：王强"></div>
+    <div class="f"><label>自我介绍 / 留言</label>
+      <textarea id="s-letter" maxlength="2000" placeholder="选填：简单介绍优势、到岗时间等"></textarea></div>
+    <div class="f"><label>简历文件 <i>*</i><span class="tip" id="file-tip">PDF / Word / 图片，≤30MB</span></label>
+      <div class="file-drop" id="file-drop">
+        <span id="file-label">点击选择或拖拽简历文件到这里</span>
+      </div>
+      <input id="s-file" type="file" accept=".pdf,.docx,.doc,.txt,.md,.png,.jpg,.jpeg,.bmp,.webp" hidden>
+    </div>
+    <div class="f" id="captcha-f"><label>验证码 <i>*</i><span class="tip">点击图片可刷新</span></label>
+      <div class="captcha-row">
+        <div class="f"><input id="s-captcha" maxlength="6" placeholder="右图中的字符" autocomplete="off"></div>
+        <img id="captcha-img" class="captcha-img" alt="验证码，点击刷新" title="点击刷新">
+      </div>
+    </div>
+    <button id="btn-submit" class="btn btn-primary">提交投递</button>
+    <div id="submit-msg" class="msg"></div>
+
+    <div id="submit-result" hidden>
+      <div class="result ok">
+        <div class="big">🎉</div>
+        <h3>投递成功！</h3>
+        <p>请牢记下方查询码（点击可复制），凭「手机号 + 查询码」随时查询进度或修改资料</p>
+        <div class="code-box" id="result-code" title="点击复制"></div>
+        <p style="font-size:12px">审核结果一般在 3 个工作日内更新，请耐心等待</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 查询/修改 -->
+  <div id="panel-query" class="card" hidden>
+    <div id="query-form">
+      <div class="f"><label>手机号 <i>*</i></label><input id="q-phone" maxlength="11" inputmode="numeric" placeholder="投递时填写的手机号" autocomplete="tel"></div>
+      <div class="f"><label>查询码 <i>*</i><span class="tip">提交成功时返回的 8 位码</span></label>
+        <input id="q-code" maxlength="8" placeholder="如 DSYY992N" autocomplete="off" style="text-transform:uppercase"></div>
+      <button id="btn-query" class="btn btn-primary">查询投递状态</button>
+      <div id="query-msg" class="msg"></div>
+    </div>
+
+    <div id="query-result" hidden>
+      <div id="status-card" class="status-card">
+        <h3 id="st-title"></h3>
+        <div class="st-line" id="st-detail"></div>
+      </div>
+      <div id="edit-zone" hidden style="margin-top:16px">
+        <p style="font-size:13px;color:var(--muted);margin-bottom:12px">状态为「待审核」时可修改资料，修改后立即生效：</p>
+        <div class="f"><label>期望职位</label><input id="e-title" maxlength="60"></div>
+        <div class="f"><label>邮箱</label><input id="e-email" type="email" maxlength="100"></div>
+        <div class="f"><label>推荐人</label><input id="e-referrer" maxlength="30"></div>
+        <div class="f"><label>自我介绍 / 留言</label><textarea id="e-letter" maxlength="2000"></textarea></div>
+        <div class="f"><label>替换简历文件<span class="tip">不选则保留原文件</span></label>
+          <div class="file-drop" id="efile-drop"><span id="efile-label">点击选择新简历文件</span></div>
+          <input id="e-file" type="file" accept=".pdf,.docx,.doc,.txt,.md,.png,.jpg,.jpeg,.bmp,.webp" hidden>
+        </div>
+        <button id="btn-update" class="btn btn-primary">保存修改</button>
+        <div id="update-msg" class="msg"></div>
+      </div>
+      <button id="btn-back-query" class="btn btn-ghost" style="margin-top:12px">返回重新查询</button>
+    </div>
+  </div>
+
+  <div class="foot" id="foot-copyright"></div>
+</div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+let captchaRequired = true, captchaId = "";
+let curRec = null;   // 当前查询到的投递记录
+
+function esc(v) { return String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, opts);
+  let body = null;
+  try { body = await res.json(); } catch (_) {}
+  if (!res.ok) throw new Error((body && body.detail) || `HTTP ${res.status}`);
+  return body;
+}
+
+/* ---- tab 切换 ---- */
+$("#tab-btn-submit").onclick = () => switchTab("submit");
+$("#tab-btn-query").onclick = () => switchTab("query");
+function switchTab(t) {
+  $("#tab-btn-submit").classList.toggle("on", t === "submit");
+  $("#tab-btn-query").classList.toggle("on", t === "query");
+  $("#panel-submit").hidden = t !== "submit";
+  $("#panel-query").hidden = t !== "query";
+}
+
+/* ---- 验证码 ---- */
+async function refreshCaptcha() {
+  if (!captchaRequired) return;
+  try {
+    const r = await api("/apply-api/captcha");
+    captchaId = r.captcha_id;
+    $("#captcha-img").src = r.image;
+  } catch (e) { $("#captcha-img").alt = "验证码加载失败"; }
+}
+$("#captcha-img").onclick = refreshCaptcha;
+
+/* ---- 文件选择 ---- */
+function bindFile(dropSel, inputSel, labelSel) {
+  const drop = $(dropSel), input = $(inputSel), label = $(labelSel);
+  drop.onclick = () => input.click();
+  ["dragover", "dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", e => { if (e.dataTransfer.files.length) { input.files = e.dataTransfer.files; showName(); } });
+  input.onchange = showName;
+  function showName() {
+    const f = input.files[0];
+    label.innerHTML = f ? `<span class="fname">✓ ${esc(f.name)}（${(f.size / 1048576).toFixed(1)}MB）</span>` : "点击选择或拖拽简历文件到这里";
+  }
+}
+bindFile("#file-drop", "#s-file", "#file-label");
+bindFile("#efile-drop", "#e-file", "#efile-label");
+
+/* ---- 提交 ---- */
+$("#btn-submit").onclick = async () => {
+  const msg = $("#submit-msg");
+  msg.className = "msg"; msg.textContent = "";
+  const name = $("#s-name").value.trim(), phone = $("#s-phone").value.trim();
+  if (!name) { msg.className = "msg err"; msg.textContent = "请填写姓名"; return; }
+  if (!/^1[3-9]\d{9}$/.test(phone)) { msg.className = "msg err"; msg.textContent = "请填写有效的 11 位手机号"; return; }
+  if (!$("#s-file").files.length) { msg.className = "msg err"; msg.textContent = "请选择简历文件"; return; }
+  const fd = new FormData();
+  fd.append("name", name); fd.append("phone", phone);
+  fd.append("email", $("#s-email").value.trim());
+  fd.append("expected_title", $("#s-title").value.trim());
+  fd.append("referrer", $("#s-referrer").value.trim());
+  fd.append("cover_letter", $("#s-letter").value.trim());
+  if (captchaRequired) { fd.append("captcha_id", captchaId); fd.append("captcha_code", $("#s-captcha").value.trim()); }
+  fd.append("file", $("#s-file").files[0]);
+  const btn = $("#btn-submit");
+  btn.disabled = true; btn.textContent = "提交中…";
+  try {
+    const r = await api("/apply-api/submit", { method: "POST", body: fd });
+    $("#panel-submit").querySelectorAll(".f, #btn-submit").forEach(el => el.hidden = true);
+    $("#submit-result").hidden = false;
+    $("#result-code").textContent = r.code;
+    $("#result-code").onclick = () => {
+      navigator.clipboard && navigator.clipboard.writeText(r.code);
+      $("#result-code").style.borderColor = "var(--ok)";
+    };
+  } catch (e) {
+    msg.className = "msg err"; msg.textContent = e.message;
+    refreshCaptcha(); $("#s-captcha").value = "";
+  } finally { btn.disabled = false; btn.textContent = "提交投递"; }
+};
+
+/* ---- 查询 ---- */
+$("#btn-query").onclick = async () => {
+  const msg = $("#query-msg");
+  msg.className = "msg"; msg.textContent = "";
+  const phone = $("#q-phone").value.trim(), code = $("#q-code").value.trim().toUpperCase();
+  if (!phone || !code) { msg.className = "msg err"; msg.textContent = "请填写手机号和查询码"; return; }
+  try {
+    const r = await api("/apply-api/query", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone, code }) });
+    curRec = r;
+    renderResult(r);
+  } catch (e) { msg.className = "msg err"; msg.textContent = e.message; }
+};
+
+function renderResult(r) {
+  $("#query-form").hidden = true;
+  $("#query-result").hidden = false;
+  const card = $("#status-card");
+  card.className = `status-card ${r.status}`;
+  const icons = { "待审核": "⏳", "已同意": "🎉", "已拒绝": "🙏" };
+  const titles = { "待审核": "审核中，请耐心等待", "已同意": "恭喜！您已通过筛选", "已拒绝": "很遗憾，本次未能通过" };
+  $("#st-title").textContent = `${icons[r.status] || ""} ${titles[r.status] || r.status}`;
+  $("#st-detail").innerHTML =
+    `投递人：<b>${esc(r.name)}</b> · 期望职位：${esc(r.expected_title || "—")}<br>` +
+    `投递时间：${esc(r.created_at)}${r.updated_at && r.updated_at !== r.created_at ? ` · 最后更新：${esc(r.updated_at)}` : ""}<br>` +
+    (r.status === "已拒绝" && r.reject_reason ? `原因：${esc(r.reject_reason)}<br>` : "") +
+    (r.talent_id ? `已进入企业人才库（编号 #${r.talent_id}），HR 将尽快与您联系<br>` : "") +
+    (r.status === "已同意" && !r.talent_id ? `HR 将尽快与您联系，请保持手机畅通<br>` : "");
+  const canEdit = r.status === "待审核";
+  $("#edit-zone").hidden = !canEdit;
+  if (canEdit) {
+    $("#e-title").value = r.expected_title || "";
+    $("#e-email").value = r.email || "";
+    $("#e-referrer").value = r.referrer || "";
+    $("#e-letter").value = r.cover_letter || "";
+  }
+}
+
+$("#btn-back-query").onclick = () => {
+  $("#query-result").hidden = true;
+  $("#query-form").hidden = false;
+  $("#query-msg").textContent = "";
+  curRec = null;
+};
+
+$("#btn-update").onclick = async () => {
+  const msg = $("#update-msg");
+  msg.className = "msg"; msg.textContent = "";
+  if (!curRec) return;
+  const fd = new FormData();
+  fd.append("phone", $("#q-phone").value.trim());
+  fd.append("code", $("#q-code").value.trim().toUpperCase());
+  fd.append("name", curRec.name);
+  fd.append("expected_title", $("#e-title").value.trim());
+  fd.append("email", $("#e-email").value.trim());
+  fd.append("referrer", $("#e-referrer").value.trim());
+  fd.append("cover_letter", $("#e-letter").value.trim());
+  if ($("#e-file").files.length) fd.append("file", $("#e-file").files[0]);
+  const btn = $("#btn-update");
+  btn.disabled = true; btn.textContent = "保存中…";
+  try {
+    const r = await api("/apply-api/update", { method: "POST", body: fd });
+    curRec = r;
+    renderResult(r);
+    msg.className = "msg ok"; msg.textContent = "✓ 修改已生效";
+  } catch (e) { msg.className = "msg err"; msg.textContent = e.message; }
+  finally { btn.disabled = false; btn.textContent = "保存修改"; }
+};
+
+/* ---- 初始化 ---- */
+(async () => {
+  try {
+    const info = await api("/apply-api/info");
+    $("#company-name").textContent = `${info.company} · 简历投递`;
+    captchaRequired = info.captcha_required;
+    $("#captcha-f").hidden = !captchaRequired;
+    $("#file-tip").textContent = `${(info.allowed_exts || []).join(" / ")}，≤${info.max_file_mb}MB`;
+    const cr = info.copyright || {};
+    $("#foot-copyright").innerHTML =
+      `© ${esc(cr.owner || "")} · ${esc(cr.author || "")} 开发<br>${esc(cr.notice || "")}<br>` +
+      `联系：<a href="mailto:${esc(cr.email || "")}">${esc(cr.email || "")}</a> · ${esc(cr.phone || "")}<br>` +
+      `Powered by TalentHub 企业人才库`;
+    refreshCaptcha();
+  } catch (e) {
+    $("#foot-copyright").textContent = "页面信息加载失败，请刷新重试";
+  }
+})();
+</script>
+</body>
+</html>

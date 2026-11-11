@@ -27,6 +27,9 @@ from app import config  # noqa: E402
 def _port_busy(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.5)
+        # 与 uvicorn 实际 bind 行为一致（SO_REUSEADDR），否则旧进程 TIME_WAIT 残留
+        # 会让检测误报"占用"而 uvicorn 其实能正常启动（2026-11 实测竞态）
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         # 检查监听侧：bind 能成功说明端口空闲
         try:
             s.bind((host if host != "0.0.0.0" else "", port))
@@ -78,14 +81,22 @@ def main():
 
     bar = "─" * 56
     from app import __version__
+    apply_line = ""
+    if cfg.get("apply_enabled", True):
+        ap = cfg.get("apply_port", 8301)
+        apply_line = f"\n│  投递门户:  {('http://' + lan + ':' + str(ap)) if host == '0.0.0.0' else 'http://127.0.0.1:' + str(ap)}"
+        apply_line += " " * max(1, 56 - 13 - len(apply_line.split("  ", 1)[-1]) - 1) + "│"
     print(f"""
 ┌{bar}┐
 │  TalentHub 企业人才库  v{__version__}                          │
 │  本机访问:  {url_local:<43}│
-│  局域网:    {('http://' + lan + ':' + str(port)) if host == '0.0.0.0' else '（未开放端口，设置中改 host=0.0.0.0）':<43}│
+│  局域网:    {('http://' + lan + ':' + str(port)) if host == '0.0.0.0' else '（未开放端口，设置中改 host=0.0.0.0）':<43}│{apply_line}
 │  数据目录:  {str(config.DATA_DIR)[:43]:<43}│
 │  按 Ctrl+C 停止服务                                         │
-└{bar}┘""")
+└{bar}┘
+  © {config.COPYRIGHT['owner']} · {config.COPYRIGHT['author']} 开发
+  {config.COPYRIGHT['notice']}
+  联系: {config.COPYRIGHT["phone"]} / {config.COPYRIGHT["email"]}""", flush=True)
 
     if auto_open:
         def _open():

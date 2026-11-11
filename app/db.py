@@ -53,6 +53,27 @@ CREATE TABLE IF NOT EXISTS events (
     action TEXT DEFAULT '',
     detail TEXT DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS applications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL DEFAULT '',          -- 8位查询码（投递人凭 手机号+查询码 查状态/修改）
+    name TEXT NOT NULL DEFAULT '',
+    phone TEXT NOT NULL DEFAULT '',
+    email TEXT DEFAULT '',
+    expected_title TEXT DEFAULT '',
+    referrer TEXT DEFAULT '',               -- 推荐人（企业内部投递场景）
+    cover_letter TEXT DEFAULT '',           -- 自我介绍/留言
+    file_name TEXT DEFAULT '',
+    file_path TEXT DEFAULT '',
+    status TEXT DEFAULT '待审核',            -- 待审核 / 已同意 / 已拒绝
+    reject_reason TEXT DEFAULT '',
+    talent_id INTEGER,                      -- 转人才库后的记录 id
+    ip TEXT DEFAULT '',
+    created_at TEXT DEFAULT '',
+    updated_at TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_applications_phone ON applications(phone);
+CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status);
 """
 
 # 增量迁移列（老库 ALTER TABLE 补列；已存在时忽略 Duplicate column 错误）
@@ -83,8 +104,14 @@ FIELDS = [
     ("created_at", "创建时间"), ("updated_at", "更新时间"),
 ]
 
-STATUS_LIST = ["潜在", "跟进中", "已邀约", "已面试", "已录用", "不合适", "已归档"]
+STATUS_LIST = ["潜在", "跟进中", "已邀约", "已面试", "已录用", "不合适", "已归档"]  # 默认状态（兼容旧引用）
 RATING_LIST = ["A", "B", "C", "D"]
+APPLICATION_STATUSES = ["待审核", "已同意", "已拒绝"]
+
+
+def statuses() -> list[str]:
+    """当前生效状态列表（配置可自定义）。"""
+    return config.get_statuses()
 
 
 def now() -> str:
@@ -138,3 +165,16 @@ def log_event(action: str, detail: str = "") -> None:
                      (now(), action, detail))
         conn.execute("DELETE FROM events WHERE id NOT IN "
                      "(SELECT id FROM events ORDER BY id DESC LIMIT ?)", (MAX_EVENTS,))
+
+
+def clear_events(ids: list[int] | None = None) -> int:
+    """删除操作日志：ids=None 清空全部，否则删除指定 id。返回删除条数。"""
+    with db() as conn:
+        if ids is None:
+            cur = conn.execute("DELETE FROM events")
+        else:
+            if not ids:
+                return 0
+            marks = ",".join("?" * len(ids))
+            cur = conn.execute(f"DELETE FROM events WHERE id IN ({marks})", ids)
+        return cur.rowcount

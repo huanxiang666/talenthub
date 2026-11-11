@@ -46,7 +46,7 @@ def main():
     print("== 2. 设置读写 ==")
     cfg0 = s.get(f"{BASE}/api/settings", timeout=10).json()
     r = s.put(f"{BASE}/api/settings", json={"ocr_max_pages": 25}, timeout=10)
-    check("PUT settings 200", r.status_code == 200 and r.json()["ocr_max_pages"] == 25)
+    check("PUT settings 200", r.status_code == 200 and r.json()["config"]["ocr_max_pages"] == 25)
     r = s.put(f"{BASE}/api/settings", json={"host": "8.8.8.8"}, timeout=10)
     check("非法 host 被拒", r.status_code == 400, str(r.text[:80]))
     s.put(f"{BASE}/api/settings", json={"ocr_max_pages": cfg0.get("ocr_max_pages", 30)}, timeout=10)
@@ -248,6 +248,63 @@ def main():
     r = s.get(f"{BASE}/api/export/csv", params={"q": "新字段测试"}, timeout=30)
     check("csv 含新字段", "wx_abc" in r.content.decode("utf-8-sig"))
     s.delete(f"{BASE}/api/talents/{nid}", timeout=10)
+
+    print("== 18. v1.2：自定义状态 / 日志删除 / 版权资源 / 锁屏 / 投递 ==")
+    # 自定义状态
+    s.put(f"{BASE}/api/settings", json={"custom_statuses": "新线索、初筛、复试、Offer、已归档"}, timeout=10)
+    sts = s.get(f"{BASE}/api/statuses", timeout=10).json()["statuses"]
+    check("自定义状态生效", sts == ["新线索", "初筛", "复试", "Offer", "已归档"], str(sts))
+    r = s.post(f"{BASE}/api/talents", json={"data": {"name": "状态测试", "phone": "13000008888", "status": "复试"}}, timeout=10)
+    check("自定义状态可入库", r.status_code == 200 and r.json()["status"] == "复试")
+    sid = r.json()["id"]
+    r = s.post(f"{BASE}/api/talents/batch", json={"ids": [sid], "action": "status", "value": "跟进中"}, timeout=10)
+    check("旧默认状态被自定义列表拒绝", r.status_code == 400)
+    s.delete(f"{BASE}/api/talents/{sid}", timeout=10)
+    s.put(f"{BASE}/api/settings", json={"custom_statuses": ""}, timeout=10)
+    sts = s.get(f"{BASE}/api/statuses", timeout=10).json()["statuses"]
+    check("清空自定义回退默认七状态", sts[0] == "潜在" and len(sts) == 7)
+    # 日志删除
+    n0 = len(s.get(f"{BASE}/api/events", timeout=10).json()["items"])
+    r = s.request("DELETE", f"{BASE}/api/events", json={}, timeout=10)
+    check("日志可清空", r.status_code == 200 and r.json()["deleted"] >= 1)
+    n1 = len(s.get(f"{BASE}/api/events", timeout=10).json()["items"])
+    check("清空后仅剩本次清空事件", n1 < n0 and n1 <= 1, f"{n0}->{n1}")
+    # 版权与资源
+    ab = s.get(f"{BASE}/api/about", timeout=10).json()
+    check("版权信息完整", ab["copyright"]["owner"] == "慈溪八凯八威电子商务经营部"
+          and "胡利杰" in ab["copyright"]["author"]
+          and ab["copyright"]["phone"] == "13208088838"
+          and ab["copyright"]["email"] == "admin@8k8w.com")
+    res = s.get(f"{BASE}/api/system/resources", timeout=10).json()
+    check("内存/GPU 探测结构", res["ram"]["total_mb"] > 0 and "available" in res["gpu"]
+          and "model_id" in res["recommend"] and res["recommend"]["reason"])
+    models = s.get(f"{BASE}/api/llm/models", timeout=10).json()
+    check("模型目录 ≥7 档且带内存估算", len(models["models"]) >= 7
+          and all(m.get("ram_mb", 0) > 0 for m in models["models"] if m.get("urls")))
+    # 锁屏（API 层快验，UI 层另有 CDP 套件）
+    check("锁初始未设置", s.get(f"{BASE}/api/auth/status", timeout=10).json()["set"] is False)
+    check("短密码被拒", s.post(f"{BASE}/api/auth/setup", json={"password": "123", "auto_lock_minutes": 30}, timeout=10).status_code == 400)
+    s.post(f"{BASE}/api/auth/setup", json={"password": "e2e123456", "auto_lock_minutes": 0}, timeout=10)
+    check("锁定后无令牌 401", s.get(f"{BASE}/api/talents", timeout=10).status_code == 401)
+    check("health 白名单仍通", s.get(f"{BASE}/api/health", timeout=10).status_code == 200)
+    tok = s.post(f"{BASE}/api/auth/unlock", json={"password": "e2e123456"}, timeout=10).json()["token"]
+    hd = {"Authorization": f"Bearer {tok}"}
+    check("解锁令牌可访问", s.get(f"{BASE}/api/talents", headers=hd, timeout=10).status_code == 200)
+    check("伪造令牌 401", s.get(f"{BASE}/api/talents", headers={"Authorization": "Bearer x.y"}, timeout=10).status_code == 401)
+    r = s.post(f"{BASE}/api/auth/disable", json={"password": "e2e123456"}, timeout=10)
+    check("锁屏可关闭", r.status_code == 200 and r.json()["enabled"] is False)
+    # 投递门户（第二端口）
+    APPLY = "http://127.0.0.1:8301"
+    info = s.get(f"{APPLY}/apply-api/info", timeout=10).json()
+    check("投递门户 info", info["captcha_required"] is True and "慈溪" in info["company"])
+    cap = s.get(f"{APPLY}/apply-api/captcha", timeout=10).json()
+    check("验证码图片可生成", cap["image"].startswith("data:image/png;base64,") and len(cap["captcha_id"]) > 10)
+    r = s.post(f"{APPLY}/apply-api/submit",
+               data={"name": "E2E投递", "phone": "13600006666", "captcha_id": cap["captcha_id"], "captcha_code": "XXXX"},
+               timeout=10)
+    check("错误验证码被拒", r.status_code == 400)
+    lst = s.get(f"{BASE}/api/applications", timeout=10).json()
+    check("管理端投递列表结构", "items" in lst and "pending" in lst and "total" in lst)
 
     print(f"\n全部通过：{len(PASSED)} 项断言 ✓")
 
