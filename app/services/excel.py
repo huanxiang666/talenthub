@@ -78,7 +78,7 @@ STATUS_COLORS = {"潜在": "475569", "跟进中": "0284C7", "已邀约": "9333EA
 RATING_COLORS = {"A": "059669", "B": "0284C7", "C": "D97706", "D": "94A3B8"}
 
 
-def _style_sheet(ws, n_cols: int, widths: list[int]):
+def _style_sheet(ws, n_cols: int, widths: list[int], cols: list[tuple] = None):
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(n_cols)}{max(ws.max_row, 1)}"
     for i, w in enumerate(widths, 1):
@@ -89,8 +89,10 @@ def _style_sheet(ws, n_cols: int, widths: list[int]):
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = BORDER
     ws.row_dimensions[1].height = 22
-    status_col = next((i for i, c in enumerate(EXPORT_COLUMNS, 1) if c[0] == "status"), None)
-    rating_col = next((i for i, c in enumerate(EXPORT_COLUMNS, 1) if c[0] == "rating"), None)
+    # 状态/评级着色列号必须按「实际导出的列」计算（用户选列后全量下标会越界）
+    _cols = cols if cols is not None else EXPORT_COLUMNS
+    status_col = next((i for i, c in enumerate(_cols, 1) if c[0] == "status"), None)
+    rating_col = next((i for i, c in enumerate(_cols, 1) if c[0] == "rating"), None)
     for r_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
         for cell in row:
             cell.font = BODY_FONT
@@ -143,15 +145,26 @@ def _fmt_cell(key: str, v):
     return "" if v is None else _safe_cell(v)
 
 
-def export_xlsx(rows: list[dict], title: str = "人才列表") -> bytes:
+def _select_columns(columns: list[str] | None) -> list[tuple]:
+    """按用户选择的中文列名过滤导出列（保持 EXPORT_COLUMNS 原始顺序）。
+    None/空 = 全部列；无效列名静默忽略；全部无效时回退全部（保证导出不空）。"""
+    if not columns:
+        return list(EXPORT_COLUMNS)
+    wanted = {str(c).strip() for c in columns if str(c).strip()}
+    sel = [c for c in EXPORT_COLUMNS if c[1] in wanted]
+    return sel or list(EXPORT_COLUMNS)
+
+
+def export_xlsx(rows: list[dict], title: str = "人才列表", columns: list[str] | None = None) -> bytes:
+    cols = _select_columns(columns)
     wb = Workbook()
     ws = wb.active
     ws.title = title[:28]
-    ws.append([c[1] for c in EXPORT_COLUMNS])
+    ws.append([c[1] for c in cols])
     for r in rows:
-        line = [_fmt_cell(key, r.get(key)) for key, _label, _w in EXPORT_COLUMNS]
+        line = [_fmt_cell(key, r.get(key)) for key, _label, _w in cols]
         ws.append(line)
-    _style_sheet(ws, len(EXPORT_COLUMNS), [c[2] for c in EXPORT_COLUMNS])
+    _style_sheet(ws, len(cols), [c[2] for c in cols], cols)
 
     # 第二个 sheet：数据概览（导出即带统计，给领导看的规范件）
     ov = wb.create_sheet("数据概览")
@@ -180,12 +193,13 @@ def export_xlsx(rows: list[dict], title: str = "人才列表") -> bytes:
     return buf.getvalue()
 
 
-def export_csv(rows: list[dict]) -> bytes:
+def export_csv(rows: list[dict], columns: list[str] | None = None) -> bytes:
+    cols = _select_columns(columns)
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow([c[1] for c in EXPORT_COLUMNS])
+    w.writerow([c[1] for c in cols])
     for r in rows:
-        w.writerow([_fmt_cell(k, r.get(k)) for k, _l, _w in EXPORT_COLUMNS])
+        w.writerow([_fmt_cell(k, r.get(k)) for k, _l, _w in cols])
     return buf.getvalue().encode("utf-8-sig")
 
 

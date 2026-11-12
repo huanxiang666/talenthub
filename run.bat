@@ -36,5 +36,19 @@ if errorlevel 1 (
   exit /b 1
 )
 
+rem AI 组件（llama-cpp-python）：自动补装一次，装不上不阻断（规则解析+外部API引擎仍可用）
+if not exist ".venv\.llm-tried" (
+  .venv\Scripts\python.exe -c "import llama_cpp" >nul 2>&1
+  if errorlevel 1 (
+    echo [安装] 正在安装 AI 组件 llama-cpp-python（CPU 预编译轮子，约 30-60 秒）…
+    .venv\Scripts\python.exe -m pip install -q llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+    if errorlevel 1 (
+      echo [提示] AI 组件安装失败（多为网络原因），程序仍可正常运行。
+      echo        稍后可手动执行: .venv\Scripts\pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+    )
+  )
+  echo. > ".venv\.llm-tried"
+)
+
 .venv\Scripts\python.exe server.py %*
 pause

@@ -502,8 +502,10 @@ $("#f-sort").addEventListener("change", e => {
   state.query.sort = sort; state.query.order = order; loadTalents();
 });
 $("#btn-export-filtered").addEventListener("click", () => {
-  window.location = `/api/export/excel?${querystring({ page: undefined, size: undefined })}`;
-  toast("已按当前筛选条件导出 Excel");
+  const cols = getExportCols();
+  const extra = cols && cols.length ? { columns: cols.join(",") } : {};
+  window.location = `/api/export/excel?${querystring({ page: undefined, size: undefined, ...extra })}`;
+  toast(`已按当前筛选条件导出 Excel${cols && cols.length ? `（${cols.length} 列）` : ""}`);
 });
 $("#batch-apply-status").addEventListener("click", () => batchOp("status", $("#batch-status").value));
 $("#batch-apply-rating").addEventListener("click", () => batchOp("rating", $("#batch-rating").value));
@@ -574,13 +576,18 @@ function renderDrawerPreview() {
   box.innerHTML = filePreviewHtml(`/api/files/${t.id}?inline=1`, t.source_file || "");
 }
 
-/* 通用文件在线预览：PDF → iframe；图片 → img；其它 → 原文/下载引导 */
+/* 通用文件在线预览：PDF → iframe；图片 → img；docx/txt/md → 服务端转 PDF 预览；其它 → 下载引导 */
 function filePreviewHtml(url, fname) {
   const ext = (fname.split(".").pop() || "").toLowerCase();
   if (ext === "pdf") return `<iframe src="${esc(url)}" title="简历预览"></iframe>`;
   if (["png", "jpg", "jpeg", "bmp", "webp", "gif"].includes(ext))
     return `<img src="${esc(url)}" alt="简历图片预览">`;
-  return `<div class="preview-fallback">「${esc(fname)}」暂不支持窗口内预览（Word/TXT 请看「解析原文」页签）。<br><a class="btn btn-ghost btn-sm" href="${esc(url.replace("?inline=1", ""))}" download>⤓ 下载原件查看</a></div>`;
+  if (["docx", "txt", "md"].includes(ext)) {
+    const pdfUrl = url.includes("?") ? `${url}&mode=pdf` : `${url}?mode=pdf`;
+    return `<iframe src="${esc(pdfUrl)}" title="简历预览（已转 PDF）"></iframe>
+      <p class="muted" style="font-size:11.5px;margin-top:6px;text-align:center">Word/TXT 已自动转换为 PDF 预览（保留文字排版）；<a href="${esc(url.replace(/&?mode=pdf/, ""))}" download>下载原件</a></p>`;
+  }
+  return `<div class="preview-fallback">「${esc(fname)}」暂不支持窗口内预览（老式 .doc 请另存为 .docx）。<br><a class="btn btn-ghost btn-sm" href="${esc(url.split("?")[0])}" download>⤓ 下载原件查看</a></div>`;
 }
 
 /* 通用预览弹窗（人才表 👁 / 投递审核共用） */
@@ -740,7 +747,13 @@ function updateAppBadge(pending) {
 
 $("#app-tbody").addEventListener("click", async e => {
   const pv = e.target.closest("[data-app-preview]");
-  if (pv) { openFilePreview(`/api/applications/${pv.dataset.appPreview}/file?inline=1`, "投递简历预览"); return; }
+  if (pv) {
+    const rec = appState.items.find(x => String(x.id) === pv.dataset.appPreview) || {};
+    const ext = (rec.file_name || "").split(".").pop().toLowerCase();
+    const base = `/api/applications/${pv.dataset.appPreview}/file?inline=1`;
+    openFilePreview(["docx", "txt", "md"].includes(ext) ? `${base}&mode=pdf` : base, "投递简历预览");
+    return;
+  }
   const gt = e.target.closest("[data-goto-talent]");
   if (gt) { openDrawer(Number(gt.dataset.gotoTalent)); return; }
   const ap = e.target.closest("[data-app-approve]");
@@ -895,26 +908,33 @@ bindDropzone("#dropzone-resume", "#file-resume", uploadResumes);
 
 async function uploadResumes(files) {
   const forceLlm = $("#force-llm") && $("#force-llm").checked;
-  setProgress("#resume-progress", true, forceLlm
+  const splitScan = $("#split-scan") && $("#split-scan").checked;
+  setProgress("#resume-progress", true, splitScan
+    ? `正在按页拆分解析 ${files.length} 个文件（每页独立 OCR + 解析，请耐心等待）…`
+    : forceLlm
     ? `正在 AI 增强解析 ${files.length} 份文件（每份需本地模型推理，请耐心等待）…`
     : `正在解析 ${files.length} 份文件（扫描版走 OCR，请稍候）…`);
   const fd = new FormData();
   files.forEach(f => fd.append("files", f));
   fd.append("force_llm", forceLlm ? "1" : "0");
+  fd.append("split_scan", splitScan ? "1" : "0");
   let r;
   try { r = await api("/api/import/resumes", { method: "POST", body: fd }); }
   catch (e) { setProgress("#resume-progress", false); toast(e.message, "err", "上传失败"); return; }
   setProgress("#resume-progress", false);
 
-  const okResults = r.results.filter(x => x.ok);
+  const okResults = r.results.filter(x => x.ok && x.draft);
   const failResults = r.results.filter(x => !x.ok);
+  const splitNotes = r.results.filter(x => x.split_note);
   failResults.forEach(f => toast(`${f.filename}: ${f.error}`, "err", "解析失败"));
+  splitNotes.forEach(n => toast(n.split_note, "warn", "拆分录入"));
   if (!okResults.length) { if (failResults.length) toast("全部文件解析失败，请检查文件格式", "err"); return; }
 
   state.drafts = okResults.map(x => ({ ...x.draft, _file: x.filename, _method: x.method, _llm: !!x.llm_used, _conf: x.draft.parse_confidence || 0, _warnings: x.warnings || [] }));
   renderDrafts();
-  const llmNote = r.llm_used_count ? `，其中 ${r.llm_used_count} 份经本地 AI 增强` : "";
-  toast(`成功解析 ${okResults.length}/${r.total} 份${llmNote}`, "ok", "解析完成");
+  const llmNote = r.llm_used_count ? `，其中 ${r.llm_used_count} 份经 AI 增强` : "";
+  const splitNote = r.split_scan ? "（拆分模式）" : "";
+  toast(`成功解析 ${okResults.length} 份草稿${splitNote}${llmNote}`, "ok", "解析完成");
 }
 
 function methodBadge(m, llm) {
@@ -1026,6 +1046,7 @@ $("#btn-table-cancel").addEventListener("click", () => { state.tablePreview = nu
 
 /* ================= 数据管理 ================= */
 async function loadDataView() {
+  renderColsSummary();
   try {
     const sys = await api("/api/system");
     $("#db-info").innerHTML = `数据库：<code>${esc(sys.db_path)}</code><br>大小：${sys.db_size_kb} KB · 上传目录：<code>${esc(sys.upload_dir)}</code>`;
@@ -1038,8 +1059,8 @@ async function loadDataView() {
       || `<tr><td colspan="3" class="muted">暂无操作记录</td></tr>`;
   } catch (e) { toast(e.message, "err", "日志加载失败"); }
 }
-$("#btn-export-all-xlsx").addEventListener("click", () => { window.location = "/api/export/excel"; });
-$("#btn-export-all-csv").addEventListener("click", () => { window.location = "/api/export/csv"; });
+$("#btn-export-all-xlsx").addEventListener("click", () => { window.location = `/api/export/excel${colsQuery()}`; });
+$("#btn-export-all-csv").addEventListener("click", () => { window.location = `/api/export/csv${colsQuery()}`; });
 $("#btn-download-template").addEventListener("click", () => { window.location = "/api/export/template"; });
 $("#btn-export-json").addEventListener("click", () => { window.location = "/api/export/json"; });
 $("#btn-clear-events").addEventListener("click", async () => {
@@ -1063,6 +1084,102 @@ $("#file-json").addEventListener("change", async e => {
     toast("JSON 备份合并完成");
   } catch (err) { $("#json-result").textContent = ""; toast(err.message, "err", "导入失败"); }
 });
+
+/* ================= 导出列选择 ================= */
+const COMMON_COLS = ["姓名", "电话", "邮箱", "学历", "毕业院校", "当前公司", "当前职位", "期望职位", "状态", "评级"];
+function getExportCols() {
+  try { return JSON.parse(localStorage.getItem("th_export_cols") || "null"); } catch (_) { return null; }
+}
+function colsQuery(extra = {}) {
+  const cols = getExportCols();
+  const qs = new URLSearchParams(extra);
+  if (cols && cols.length) qs.set("columns", cols.join(","));
+  const str = qs.toString();
+  return str ? `?${str}` : "";
+}
+function renderColsSummary() {
+  const el = $("#columns-summary");
+  if (!el) return;
+  const cols = getExportCols();
+  el.textContent = cols && cols.length
+    ? `当前导出 ${cols.length} 列：${cols.join("、")}`
+    : "当前导出全部列（未做选择）";
+}
+async function openColumnPicker() {
+  let all = [];
+  try { all = (await api("/api/export/columns")).columns; }
+  catch (e) { toast(e.message, "err"); return; }
+  const chosen = getExportCols() || [];
+  $("#cp-list").innerHTML = all.map(c => `
+    <label class="check-line" style="font-size:13px">
+      <input type="checkbox" value="${esc(c)}" ${chosen.includes(c) || !chosen.length && false ? "checked" : ""}> ${esc(c)}
+    </label>`).join("");
+  // 未做过选择时默认全勾
+  if (!chosen.length) $$("#cp-list input").forEach(i => i.checked = true);
+  const mask = $("#colpick-mask"), box = $("#colpick-box");
+  mask.hidden = box.hidden = false;
+  requestAnimationFrame(() => mask.classList.add("show"));
+}
+function closeColumnPicker() {
+  const mask = $("#colpick-mask"), box = $("#colpick-box");
+  mask.classList.remove("show");
+  setTimeout(() => { mask.hidden = box.hidden = true; }, 200);
+}
+$("#btn-pick-columns").addEventListener("click", openColumnPicker);
+$("#btn-pick-columns-2").addEventListener("click", openColumnPicker);
+$("#cp-close").addEventListener("click", closeColumnPicker);
+$("#cp-cancel").addEventListener("click", closeColumnPicker);
+$("#colpick-mask").addEventListener("click", closeColumnPicker);
+$("#cp-all").addEventListener("click", () => $$("#cp-list input").forEach(i => i.checked = true));
+$("#cp-none").addEventListener("click", () => $$("#cp-list input").forEach(i => i.checked = false));
+$("#cp-common").addEventListener("click", () => $$("#cp-list input").forEach(i => { i.checked = COMMON_COLS.includes(i.value); }));
+$("#cp-save").addEventListener("click", () => {
+  const sel = $$("#cp-list input:checked").map(i => i.value);
+  if (sel.length) localStorage.setItem("th_export_cols", JSON.stringify(sel));
+  else localStorage.removeItem("th_export_cols");   // 清空 = 导出全部
+  renderColsSummary();
+  closeColumnPicker();
+  toast(sel.length ? `导出列已设为 ${sel.length} 列` : "已恢复导出全部列");
+});
+
+/* ================= 软件更新检查 ================= */
+function verCmp(a, b) {
+  const pa = String(a).split(".").map(Number), pb = String(b).split(".").map(Number);
+  for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0); }
+  return 0;
+}
+async function checkUpdate(manual = false) {
+  const box = $("#update-box");
+  if (box) box.innerHTML = "检查中…（连接 GitHub）";
+  let r;
+  try { r = await api("/api/update/check"); }
+  catch (e) {
+    if (box) box.innerHTML = `<span style="color:var(--danger)">检查失败：${esc(e.message)}（网络不通 GitHub 时稍后再试）</span>`;
+    return null;
+  }
+  if (r.error) {
+    if (box) box.innerHTML = `<span style="color:var(--danger)">检查失败：${esc(r.error)}</span>`;
+    if (manual) toast("更新检查失败（网络原因）", "warn");
+    return r;
+  }
+  if (!r.has_update) {
+    if (box) box.innerHTML = `当前版本 <b>v${esc(r.current)}</b> 已是最新 ✓（发布于 ${esc((r.published_at || "").slice(0, 10))}）`;
+    if (manual) toast(`已是最新版本 v${r.latest}`);
+    return r;
+  }
+  const assets = (r.assets || []).map(a => `
+    <div class="si-row" style="margin-top:6px"><span class="si-k">${esc(a.name)}<br><span class="unit">${a.size_mb}MB</span></span>
+    <span class="si-v"><a href="${esc(a.url)}" target="_blank" rel="noopener">官方直链</a>
+    ${Object.entries(a.mirrors || {}).map(([k, u]) => ` · <a href="${esc(u)}" target="_blank" rel="noopener">${esc(k)}</a>`).join("")}</span></div>`).join("");
+  if (box) box.innerHTML = `
+    <div style="color:var(--primary);font-weight:800;font-size:14px">🎉 发现新版本 v${esc(r.latest)}（当前 v${esc(r.current)}，发布于 ${esc((r.published_at || "").slice(0, 10))}）</div>
+    ${assets}
+    <details style="margin-top:8px"><summary class="link" style="cursor:pointer">查看更新说明</summary>
+    <div style="white-space:pre-wrap;font-size:12px;margin-top:6px;max-height:220px;overflow-y:auto">${esc(r.notes || "")}</div></details>`;
+  if (!manual) toast(`发现新版本 v${r.latest}，可到「系统设置 → 软件更新」下载（支持加速源）`, "warn", "更新可用");
+  return r;
+}
+$("#btn-check-update").addEventListener("click", () => checkUpdate(true));
 
 /* ================= 系统设置 ================= */
 async function loadSettings() {
@@ -1097,10 +1214,12 @@ async function loadSettings() {
       ${esc(cr.notice || "")}<br>
       联系：📞 ${esc(cr.phone || "")} · ✉️ <a href="mailto:${esc(cr.email || "")}">${esc(cr.email || "")}</a><br>
       商业使用请先书面申请授权。版本 v${esc(sys.version)}`;
-    /* 锁屏面板 + 审计 + token 用量 */
+    /* 锁屏面板 + 审计 + token 用量 + 更新检查 */
     loadLockPanel();
     loadLockAudit();
     loadUsage();
+    $("#update-current").textContent = `v${sys.version}`;
+    checkUpdate(false);
     /* AI 面板 */
     await loadAiPanel(cfg, sys);
   } catch (e) { toast(e.message, "err", "设置加载失败"); }

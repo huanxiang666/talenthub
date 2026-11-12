@@ -16,7 +16,7 @@ binaries = []
 hiddenimports = []
 
 # OCR 引擎与依赖：模型(.onnx)、配置 yaml、原生库全部收进来
-for pkg in ("rapidocr_onnxruntime", "onnxruntime", "pypdfium2", "pdfplumber", "pdfminer"):
+for pkg in ("rapidocr_onnxruntime", "onnxruntime", "pypdfium2", "pdfplumber", "pdfminer", "fpdf"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b
@@ -42,6 +42,8 @@ hiddenimports += [
     "app.extract", "app.extract.loader", "app.extract.ocr_engine", "app.extract.parser",
     "app.extract.llm_parser",
     "app.services", "app.services.talent", "app.services.excel", "app.services.model_hub",
+    "app.services.lock_auth", "app.services.applications", "app.services.doc2pdf", "app.services.updater",
+    "app.apply", "app.apply.apply_app", "app.apply.captcha",
     "uvicorn.logging", "uvicorn.loops", "uvicorn.loops.auto",
     "uvicorn.protocols", "uvicorn.protocols.http", "uvicorn.protocols.http.auto",
     "uvicorn.protocols.websockets", "uvicorn.protocols.websockets.auto",

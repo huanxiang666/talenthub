@@ -130,6 +130,39 @@ MODEL_CATALOG = [
         },
     },
     {
+        "id": "deepseek-r1-7b",
+        "file": "DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
+        "label": "DeepSeek-R1-Distill-7B（🔥推理模型轻量档，需 8GB+ 内存）",
+        "size_mb": 4700, "ram_mb": 7000,
+        "urls": {
+            "hf-mirror（国内推荐）": "https://hf-mirror.com/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
+            "ModelScope（国内）": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
+            "HuggingFace（国际）": "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
+        },
+    },
+    {
+        "id": "gemma3-12b",
+        "file": "gemma-3-12b-it-Q4_K_M.gguf",
+        "label": "Gemma-3-12B（Google 大杯多语言，需 12GB+ 内存或 GPU）",
+        "size_mb": 7200, "ram_mb": 10000,
+        "urls": {
+            "hf-mirror（国内推荐）": "https://hf-mirror.com/unsloth/gemma-3-12b-it-GGUF/resolve/main/gemma-3-12b-it-Q4_K_M.gguf",
+            "ModelScope（国内）": "https://modelscope.cn/models/unsloth/gemma-3-12b-it-GGUF/resolve/master/gemma-3-12b-it-Q4_K_M.gguf",
+            "HuggingFace（国际）": "https://huggingface.co/unsloth/gemma-3-12b-it-GGUF/resolve/main/gemma-3-12b-it-Q4_K_M.gguf",
+        },
+    },
+    {
+        "id": "qwen3-14b",
+        "file": "Qwen3-14B-Q4_K_M.gguf",
+        "label": "Qwen3-14B（专业级中文旗舰，需 16GB+ 内存或 GPU）",
+        "size_mb": 9300, "ram_mb": 13000,
+        "urls": {
+            "hf-mirror（国内推荐）": "https://hf-mirror.com/unsloth/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q4_K_M.gguf",
+            "ModelScope（国内）": "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/master/Qwen3-14B-Q4_K_M.gguf",
+            "HuggingFace（国际）": "https://huggingface.co/unsloth/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q4_K_M.gguf",
+        },
+    },
+    {
         "id": "deepseek-r1-14b",
         "file": "DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
         "label": "DeepSeek-R1-Distill-14B（🔥热门推理模型，需 16GB+ 内存或 GPU）",
@@ -138,6 +171,17 @@ MODEL_CATALOG = [
             "hf-mirror（国内推荐）": "https://hf-mirror.com/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
             "ModelScope（国内）": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
             "HuggingFace（国际）": "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
+        },
+    },
+    {
+        "id": "qwen3-30b-a3b",
+        "file": "Qwen3-30B-A3B-Q4_K_M.gguf",
+        "label": "Qwen3-30B-A3B（🔥MoE 旗舰，激活仅3B速度快，需 24GB+ 内存或大显存）",
+        "size_mb": 18700, "ram_mb": 22000,
+        "urls": {
+            "hf-mirror（国内推荐）": "https://hf-mirror.com/unsloth/Qwen3-30B-A3B-GGUF/resolve/main/Qwen3-30B-A3B-Q4_K_M.gguf",
+            "ModelScope（国内）": "https://modelscope.cn/models/unsloth/Qwen3-30B-A3B-GGUF/resolve/master/Qwen3-30B-A3B-Q4_K_M.gguf",
+            "HuggingFace（国际）": "https://huggingface.co/unsloth/Qwen3-30B-A3B-GGUF/resolve/main/Qwen3-30B-A3B-Q4_K_M.gguf",
         },
     },
 ]
@@ -210,8 +254,10 @@ def recommend(ram: dict, gpu: dict) -> dict:
     """按可用内存/GPU 给出档位建议（v1.3：覆盖 0.5B~14B 全谱系）。"""
     avail = ram.get("available_mb", 0) or ram.get("total_mb", 0)
     vram = gpu.get("vram_mb", 0) if gpu.get("available") else 0
-    if vram >= 14000 or avail >= 13000:
-        pick, why = "deepseek-r1-14b", f"资源充足（内存 {avail // 1024}GB" + (f"，显存 {vram // 1024}GB" if vram else "") + "），可跑 14B 推理旗舰档"
+    if vram >= 20000 or avail >= 24000:
+        pick, why = "qwen3-30b-a3b", f"资源顶配（内存 {avail // 1024}GB" + (f"，显存 {vram // 1024}GB" if vram else "") + "），推荐 Qwen3-30B-A3B MoE 旗舰（激活仅 3B，推理快）"
+    elif vram >= 14000 or avail >= 13000:
+        pick, why = "qwen3-14b", f"资源充足（内存 {avail // 1024}GB" + (f"，显存 {vram // 1024}GB" if vram else "") + "），推荐 Qwen3-14B 专业级中文旗舰"
     elif vram >= 9000 or avail >= 8500:
         pick, why = "qwen3-8b", f"可用内存约 {avail // 1024}GB" + ("（含 GPU）" if vram else "") + "，推荐 Qwen3-8B 准专业档"
     elif vram >= 6000 or avail >= 5500:

@@ -369,6 +369,70 @@ def main():
     r = s.post(f"{BASE}/api/auth/disable", json={"password": "e2efreeze1"}, timeout=10)
     check("e2e 收尾关闭锁屏", r.status_code == 200 and r.json()["enabled"] is False)
 
+    print("== 20. v1.4：拆分录入 / 转PDF预览 / 导出选列 / 更新检查 ==")
+    # 模型目录扩至 15 档（含 14B/30B-A3B 大杯）
+    r = s.get(f"{BASE}/api/llm/models", timeout=10).json()
+    labeled = [m for m in r["models"] if m.get("urls")]
+    check("模型目录 ≥15 档", len(labeled) >= 15, str(len(labeled)))
+    ids = {m["id"] for m in labeled}
+    check("含大参数热门款", {"qwen3-14b", "qwen3-30b-a3b", "deepseek-r1-7b", "gemma3-12b"} <= ids,
+          str(ids))
+    # 拆分录入：合成双页 PDF（文字版样本复制两页）按页拆成 2 份草稿
+    import pypdfium2 as pdfium
+    merged = pdfium.PdfDocument.new()
+    src_doc = pdfium.PdfDocument("samples/张伟-Java开发工程师-8年.pdf")
+    merged.import_pages(src_doc)
+    merged.import_pages(src_doc)
+    merged.save("/tmp/e2e_split2.pdf")
+    src_doc.close(); merged.close()
+    with open("/tmp/e2e_split2.pdf", "rb") as f:
+        r = s.post(f"{BASE}/api/import/resumes", files=[("files", ("双页.pdf", f))],
+                   data={"split_scan": "1"}, timeout=300).json()
+    drafts = [x for x in r["results"] if x.get("draft")]
+    check("拆分模式每页一份草稿", r.get("split_scan") is True and len(drafts) == 2, str(len(drafts)))
+    check("拆分草稿名带页码", all("#第" in d["filename"] for d in drafts))
+    check("拆分草稿同指一份原件", len({d["draft"]["stored_path"] for d in drafts}) == 1)
+    # 默认不拆分：同一文件仍 1 份（向后兼容）
+    with open("/tmp/e2e_split2.pdf", "rb") as f:
+        r = s.post(f"{BASE}/api/import/resumes", files=[("files", ("双页.pdf", f))], timeout=300).json()
+    check("默认不拆分仍按整份解析", len([x for x in r["results"] if x.get("draft")]) == 1)
+    # docx → PDF 在线预览
+    with open("samples/王强-机械设计工程师.docx", "rb") as f:
+        r = s.post(f"{BASE}/api/import/resumes", files=[("files", ("王强.docx", f))], timeout=120).json()
+    bid = s.post(f"{BASE}/api/talents/bulk", json={"drafts": [r["results"][0]["draft"]], "strategy": "always_new"}, timeout=30).json()["ids"][0]
+    pr = s.get(f"{BASE}/api/files/{bid}?inline=1&mode=pdf", timeout=180)
+    check("docx 在线转 PDF 预览", pr.status_code == 200 and pr.content[:4] == b"%PDF"
+          and "application/pdf" in pr.headers.get("content-type", ""), str(pr.status_code))
+    import time as _t
+    _t0 = _t.time()
+    pr2 = s.get(f"{BASE}/api/files/{bid}?inline=1&mode=pdf", timeout=60)
+    check("转换结果缓存复用", pr2.status_code == 200 and (_t.time() - _t0) < 2)
+    s.delete(f"{BASE}/api/talents/{bid}", timeout=10)
+    # 导出选列
+    cols_all = s.get(f"{BASE}/api/export/columns", timeout=10).json()["columns"]
+    check("可导出列清单 ≥26", len(cols_all) >= 26, str(len(cols_all)))
+    from openpyxl import load_workbook as _lw
+    xr = s.get(f"{BASE}/api/export/excel", params={"columns": "姓名,电话,学历"}, timeout=30)
+    hdr = [c.value for c in _lw(io.BytesIO(xr.content)).active[1]]
+    check("xlsx 按选择列导出", hdr == ["姓名", "电话", "学历"], str(hdr))
+    xr2 = s.get(f"{BASE}/api/export/excel", params={"columns": "姓名,状态,评级"}, timeout=30)
+    hdr2 = [c.value for c in _lw(io.BytesIO(xr2.content)).active[1]]
+    check("选列含状态/评级着色不越界", hdr2 == ["姓名", "状态", "评级"], str(hdr2))
+    cr2 = s.get(f"{BASE}/api/export/csv", params={"columns": "姓名,邮箱"}, timeout=30)
+    check("csv 按选择列导出", cr2.content.decode("utf-8-sig").splitlines()[0] == "姓名,邮箱")
+    xr3 = s.get(f"{BASE}/api/export/excel", params={"columns": "不存在列"}, timeout=30)
+    check("无效列名回退全部列", len([c.value for c in _lw(io.BytesIO(xr3.content)).active[1]]) >= 26)
+    # 更新检查（版本比较逻辑 + fail-soft）
+    ur = s.get(f"{BASE}/api/update/check", timeout=30).json()
+    check("更新检查返回结构", ("latest" in ur and "assets" in ur) or "error" in ur, str(ur)[:100])
+    if "latest" in ur:
+        exe = [a for a in ur["assets"] if a["name"] == "TalentHub.exe"]
+        check("Release 资产含 exe+加速镜像", bool(exe) and any("gh-proxy" in k for k in exe[0]["mirrors"]))
+    import sys as _sys, pathlib as _pl
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent))
+    from app.services import updater as _up
+    check("语义版本比较(1.10>1.9)", _up._ver_tuple("1.10.0") > _up._ver_tuple("1.9.0"))
+
     print(f"\n全部通过：{len(PASSED)} 项断言 ✓")
 
 

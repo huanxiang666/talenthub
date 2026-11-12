@@ -41,5 +41,24 @@ if [ ! -f .venv/.deps-ok ] || [ requirements.txt -nt .venv/.deps-ok ]; then
   touch .venv/.deps-ok
 fi
 
+# 3.5 AI 组件（llama-cpp-python，本地大模型解析/对话用）：
+#     自动补装一次；装不上不阻断启动（程序自动回退规则解析，外部 API 引擎不受影响）。
+#     CPU 预编译轮子来自 abetlen.github.io 索引；如需 GPU 版见 README。
+if [ ! -f .venv/.llm-tried ]; then
+  if ! .venv/bin/python -c "import llama_cpp" >/dev/null 2>&1; then
+    echo "[安装] 正在安装 AI 组件 llama-cpp-python（CPU 预编译轮子，约 30-60 秒）…"
+    if command -v uv >/dev/null 2>&1; then
+      uv pip install --python .venv/bin/python llama-cpp-python \
+        --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
+        || echo "[提示] AI 组件安装失败（网络原因），程序仍可运行（规则解析+外部API引擎可用）。稍后可手动执行: pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
+    else
+      .venv/bin/pip install -q llama-cpp-python \
+        --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
+        || echo "[提示] AI 组件安装失败（网络原因），程序仍可运行（规则解析+外部API引擎可用）。稍后可手动执行: .venv/bin/pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
+    fi
+  fi
+  touch .venv/.llm-tried
+fi
+
 # 4. 启动
 exec .venv/bin/python server.py "$@"

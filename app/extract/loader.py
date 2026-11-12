@@ -90,6 +90,60 @@ def _extract_pdf(p: Path) -> ExtractResult:
                          pages=n_pages, warnings=warnings)
 
 
+def extract_file_pages(p: str | Path) -> list[ExtractResult]:
+    """逐页提取 PDF（多份简历扫描在一个文件里的拆分录入场景）。
+
+    每页独立成一份 ExtractResult：该页文字层字符足够则直读，否则单页渲染 OCR。
+    非 PDF 文件返回单元素列表（等价 extract_file）。
+    """
+    p = Path(p)
+    if p.suffix.lower() != ".pdf":
+        return [extract_file(p)]
+    import pdfplumber
+
+    cfg = config.get()
+    ocr_on = cfg.get("ocr_enabled", True)
+    max_pages = int(cfg.get("ocr_max_pages", 30))
+    page_texts: list[str] = []
+    with pdfplumber.open(str(p)) as pdf:
+        n_pages = len(pdf.pages)
+        for page in pdf.pages:
+            page_texts.append(page.extract_text() or "")
+    if n_pages > max_pages:
+        n_pages = max_pages   # 与整份提取一致的上限保护
+
+    results: list[ExtractResult] = []
+    need_ocr_idx = [i for i in range(n_pages) if len(page_texts[i].strip()) < PDF_TEXT_THRESHOLD]
+    ocr_texts: dict[int, str] = {}
+    if need_ocr_idx and ocr_on:
+        import pypdfium2 as pdfium
+        from . import ocr_engine
+        doc = pdfium.PdfDocument(str(p))
+        try:
+            for i in need_ocr_idx:
+                bitmap = doc[i].render(scale=200 / 72)
+                lines = [ln["text"] for ln in ocr_engine.ocr_image(bitmap.to_pil())]
+                ocr_texts[i] = "\n".join(lines).strip()
+        finally:
+            doc.close()
+    for i in range(n_pages):
+        text = page_texts[i].strip()
+        method = "pdf_text"
+        ocr_used = False
+        warns: list[str] = []
+        if len(text) < PDF_TEXT_THRESHOLD:
+            if ocr_on:
+                text = ocr_texts.get(i, "")
+                method, ocr_used = "pdf_ocr", True
+                if not text:
+                    warns.append(f"第 {i + 1} 页 OCR 未识别到文字（可能是空白页/分隔页）")
+            else:
+                warns.append(f"第 {i + 1} 页文字层为空且 OCR 已关闭")
+        results.append(ExtractResult(text=text, method=method, ocr_used=ocr_used,
+                                     pages=1, warnings=warns))
+    return results
+
+
 def _extract_docx(p: Path) -> ExtractResult:
     """按文档真实顺序遍历段落与表格（简历常用表格排版，只读 paragraphs 会丢内容）。"""
     from docx import Document

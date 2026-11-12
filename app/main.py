@@ -26,7 +26,7 @@ from pydantic import BaseModel
 from . import __version__, config, db
 from .extract import llm_parser, loader, ocr_engine, parser
 from .services import excel as excel_svc
-from .services import lock_auth, model_hub
+from .services import doc2pdf, lock_auth, model_hub, updater
 from .services import applications as app_svc
 from .services import talent as talent_svc
 
@@ -199,6 +199,12 @@ def about():
     """版权与联系信息（页脚/关于/落地页共用）。"""
     return {"app": config.get().get("app_name"), "version": __version__,
             "copyright": config.COPYRIGHT}
+
+
+@app.get("/api/update/check")
+def update_check():
+    """从 GitHub 检查新版本；资产附带加速源镜像链接。失败返回 error 字段（不抛 500）。"""
+    return updater.check_update(__version__)
 
 
 # ---------- 投递门户（第二端口） ----------
@@ -603,7 +609,7 @@ def batch_op(body: BatchIn):
 
 
 @app.get("/api/files/{tid}")
-def get_original_file(tid: int, inline: int = 0):
+def get_original_file(tid: int, inline: int = 0, mode: str = ""):
     t = talent_svc.get_talent(tid)
     if not t or not t.get("stored_path"):
         _err("该记录没有关联的原件", 404)
@@ -616,7 +622,16 @@ def get_original_file(tid: int, inline: int = 0):
     if not p.exists():
         _err("原件文件已不存在", 404)
     fname = t.get("source_file") or p.name
-    return FileResponse(p, filename=fname,
+    if mode == "pdf" and p.suffix.lower() not in (".pdf",):
+        # docx/txt/md 在线预览：动态转 PDF（结果缓存 .preview.pdf）
+        try:
+            p = doc2pdf.convert_to_pdf(p)
+            fname = Path(fname).stem + ".pdf"
+        except ValueError as e:
+            _err(str(e), 422)
+        except Exception as e:
+            _err(f"转 PDF 预览失败: {type(e).__name__}: {e}", 500)
+    return FileResponse(p, filename=fname, media_type="application/pdf" if mode == "pdf" else None,
                         content_disposition_type="inline" if inline else "attachment")
 
 
@@ -665,7 +680,7 @@ def application_to_talent(aid: int):
 
 
 @app.get("/api/applications/{aid}/file")
-def get_application_file(aid: int, inline: int = 1):
+def get_application_file(aid: int, inline: int = 1, mode: str = ""):
     a = app_svc.get_application(aid)
     if not a:
         _err("投递记录不存在", 404)
@@ -676,21 +691,32 @@ def get_application_file(aid: int, inline: int = 1):
         p.resolve().relative_to(config.APPLICATION_DIR.resolve())
     except ValueError:
         _err("非法文件路径", 403)
-    return FileResponse(p, filename=a.get("file_name") or p.name,
+    fname = a.get("file_name") or p.name
+    if mode == "pdf" and p.suffix.lower() not in (".pdf",):
+        try:
+            p = doc2pdf.convert_to_pdf(p)
+            fname = Path(fname).stem + ".pdf"
+        except ValueError as e:
+            _err(str(e), 422)
+        except Exception as e:
+            _err(f"转 PDF 预览失败: {type(e).__name__}: {e}", 500)
+    return FileResponse(p, filename=fname, media_type="application/pdf" if mode == "pdf" else None,
                         content_disposition_type="inline" if inline else "attachment")
 
 
 # ---------- 简历导入（PDF/Word/图片 → 解析草稿 → 批量入库） ----------
 
 @app.post("/api/import/resumes")
-def import_resumes(files: list[UploadFile] = File(...), force_llm: str = Form("0")):
-    """上传简历文件 → 提取文本（必要时 OCR）→ 规则解析 → （低置信度时）本地 LLM 增强
+def import_resumes(files: list[UploadFile] = File(...), force_llm: str = Form("0"),
+                   split_scan: str = Form("0")):
+    """上传简历文件 → 提取文本（必要时 OCR）→ 规则解析 → （低置信度时）AI 增强
     → 返回草稿（不直接入库，由前端确认后调 /api/talents/bulk，实现"人工确认"）。
 
     同步 def：整条管线（OCR/LLM）都是 CPU 阻塞操作，交给 FastAPI 线程池执行，
     避免卡死事件循环导致其它请求（健康检查/页面）无响应。
-    force_llm=1 时对全部文件强制走 LLM（默认只对规则置信度 < llm_min_confidence 的启用，
-    批量导入时避免每份都跑几十秒推理）。"""
+    force_llm=1 时对全部文件强制走 AI（默认只对规则置信度 < llm_min_confidence 的启用）。
+    split_scan=1 时 PDF 按页拆分：适用于「多份简历扫描在同一个文件」的场合，
+    每页独立解析成一份候选人草稿（多页一份简历的普通 PDF 请不要勾选）。"""
     if not files:
         _err("未收到文件")
     if len(files) > MAX_FILES_PER_UPLOAD:
@@ -700,7 +726,28 @@ def import_resumes(files: list[UploadFile] = File(...), force_llm: str = Form("0
     llm_ok = bool(cfg.get("llm_enabled")) and llm_parser.status()["enabled"]
     llm_min = float(cfg.get("llm_min_confidence", 0.75))
     want_llm_all = force_llm == "1"
+    want_split = split_scan == "1"
     llm_errors: list[str] = []
+
+    def _parse_one(text: str, fname: str, method: str, ocr_used: bool,
+                   pages: int, warnings: list[str], stored: str) -> dict:
+        """单份文本 → 解析（+AI 增强）→ 草稿 item。"""
+        parsed = parser.parse_resume(text, fname)
+        llm_used = False
+        if llm_ok and (want_llm_all or parsed.get("parse_confidence", 0) < llm_min):
+            try:
+                parsed, llm_used = llm_parser.enhance(text, parsed)
+            except Exception as e:  # AI 失败不阻断：回退纯规则结果，记警告
+                llm_errors.append(f"{fname}: {type(e).__name__}: {e}")
+                warnings = warnings + ["AI 增强解析失败，已回退规则解析结果"]
+        parsed["source_file"] = fname
+        parsed["stored_path"] = stored if cfg.get("upload_keep_original") else ""
+        parsed["extract_method"] = method
+        parsed["source"] = "简历导入"
+        return {"ok": True, "filename": fname, "draft": parsed, "method": method,
+                "ocr_used": ocr_used, "llm_used": llm_used, "pages": pages,
+                "warnings": warnings, "text_length": len(text)}
+
     for up in files:
         fname = _safe_name(up.filename or "")
         ext = Path(fname).suffix.lower()
@@ -720,6 +767,37 @@ def import_resumes(files: list[UploadFile] = File(...), force_llm: str = Form("0
             dest = config.UPLOAD_DIR / f"{ts}_{fname}"
             dest.write_bytes(data)
             stored = str(dest)
+
+            # ---- 拆分模式：PDF 每页独立成一份草稿 ----
+            if want_split and ext == ".pdf":
+                page_results = loader.extract_file_pages(dest)
+                made = 0
+                skipped: list[str] = []
+                for i, pr in enumerate(page_results):
+                    if not pr.text.strip():
+                        skipped.append(str(i + 1))
+                        continue
+                    stem = Path(fname).stem
+                    page_name = f"{stem}#第{i + 1}页{ext}"
+                    results.append(_parse_one(pr.text, page_name, pr.method, pr.ocr_used,
+                                              1, list(pr.warnings), stored))
+                    made += 1
+                if made == 0:
+                    item["error"] = "拆分后所有页都没有文字内容"
+                    _remove_orphan(stored)
+                    results.append(item)
+                else:
+                    if skipped:
+                        results.append({"filename": fname, "ok": True, "split_note":
+                                        f"已拆分 {made} 页为独立候选人；第 {'、'.join(skipped)} 页无文字被跳过"})
+                    if not cfg.get("upload_keep_original"):
+                        _remove_orphan(stored)
+                continue
+            if want_split and ext != ".pdf":
+                item.setdefault("warnings", [])
+                # 非 PDF 不支持拆分，按普通模式继续（下方统一处理）
+
+            # ---- 普通模式：整份解析 ----
             res = loader.extract_file(dest)
             if not res.text:
                 item["error"] = "未提取到任何文字；" + "；".join(res.warnings or ["请确认文件内容"])
@@ -727,35 +805,26 @@ def import_resumes(files: list[UploadFile] = File(...), force_llm: str = Form("0
                 _remove_orphan(stored)  # 解析失败的原件不会被任何记录引用，清掉防孤儿堆积
                 results.append(item)
                 continue
-            parsed = parser.parse_resume(res.text, fname)
-            llm_used = False
-            if llm_ok and (want_llm_all or parsed.get("parse_confidence", 0) < llm_min):
-                try:
-                    parsed, llm_used = llm_parser.enhance(res.text, parsed)
-                except Exception as e:  # LLM 失败不阻断：回退纯规则结果，记警告
-                    llm_errors.append(f"{fname}: {type(e).__name__}: {e}")
-                    res.warnings.append("AI 增强解析失败，已回退规则解析结果")
-            parsed["source_file"] = fname
-            parsed["stored_path"] = stored if cfg.get("upload_keep_original") else ""
+            warns = list(res.warnings)
+            if want_split:
+                warns.append("拆分模式仅支持 PDF，此文件已按整份解析")
+            results.append(_parse_one(res.text, fname, res.method, res.ocr_used,
+                                      res.pages, warns, stored))
             if not cfg.get("upload_keep_original"):
                 _remove_orphan(stored)
-            parsed["extract_method"] = res.method
-            parsed["source"] = "简历导入"
-            item.update({
-                "ok": True, "draft": parsed, "method": res.method,
-                "ocr_used": res.ocr_used, "llm_used": llm_used, "pages": res.pages,
-                "warnings": res.warnings, "text_length": len(res.text),
-            })
         except Exception as e:
             item["error"] = f"{type(e).__name__}: {e}"
             _remove_orphan(stored)
-        results.append(item)
-    ok_n = sum(1 for r in results if r["ok"])
+            results.append(item)
+    ok_n = sum(1 for r in results if r["ok"] and "draft" in r)
     llm_n = sum(1 for r in results if r.get("llm_used"))
-    db.log_event("import_resumes", f"{len(files)} 个文件，成功解析 {ok_n} 个，AI增强 {llm_n} 个")
+    db.log_event("import_resumes",
+                 f"{len(files)} 个文件，成功解析 {ok_n} 份"
+                 + ("（拆分模式）" if want_split else "") + f"，AI增强 {llm_n} 份")
     return {"total": len(results), "parsed": ok_n, "results": results,
             "ocr_status": ocr_engine.status(), "llm_status": llm_parser.status(),
-            "llm_used_count": llm_n, "llm_errors": llm_errors[:5]}
+            "llm_used_count": llm_n, "llm_errors": llm_errors[:5],
+            "split_scan": want_split}
 
 
 class BulkIn(BaseModel):
@@ -800,19 +869,33 @@ def _export_rows(request: Request) -> list[dict]:
         sort=p.get("sort", "created_at"), order=p.get("order", "desc"))
 
 
+def _columns_param(request: Request) -> list[str] | None:
+    """导出列选择：?columns=姓名,电话,学历（中文列名，逗号分隔；缺省=全部列）。"""
+    raw = request.query_params.get("columns", "")
+    if not raw.strip():
+        return None
+    return [c.strip() for c in raw.split(",") if c.strip()]
+
+
 @app.get("/api/export/excel")
 def export_excel(request: Request):
     rows = _export_rows(request)
-    data = excel_svc.export_xlsx(rows)
+    data = excel_svc.export_xlsx(rows, columns=_columns_param(request))
     fname = f"人才库导出_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
     return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers=_disposition(fname))
 
 
+@app.get("/api/export/columns")
+def export_columns():
+    """全部可导出列（前端「选择导出列」弹窗数据源）。"""
+    return {"columns": [c[1] for c in excel_svc.EXPORT_COLUMNS]}
+
+
 @app.get("/api/export/csv")
 def export_csv(request: Request):
     rows = _export_rows(request)
-    data = excel_svc.export_csv(rows)
+    data = excel_svc.export_csv(rows, columns=_columns_param(request))
     fname = f"人才库导出_{datetime.now():%Y%m%d_%H%M%S}.csv"
     return Response(data, media_type="text/csv; charset=utf-8", headers=_disposition(fname))
 
