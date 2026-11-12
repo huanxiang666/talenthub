@@ -26,68 +26,84 @@ class ExtractResult:
     warnings: list[str] = field(default_factory=list)
 
 
-def extract_file(path: str | Path) -> ExtractResult:
+def extract_file(path: str | Path, progress_cb=None) -> ExtractResult:
+    """progress_cb: 可选回调 fn(step_text)，导入进度实时显示当前操作。"""
     p = Path(path)
     ext = p.suffix.lower()
     if ext == ".pdf":
-        return _extract_pdf(p)
+        return _extract_pdf(p, progress_cb)
     if ext == ".docx":
-        return _extract_docx(p)
+        return _extract_docx(p, progress_cb)
     if ext == ".doc":
         raise ValueError("暂不支持老式 .doc 二进制格式，请在 Word/WPS 中另存为 .docx 或 .pdf 后导入")
     if ext in IMAGE_EXTS:
-        return _extract_image(p)
+        return _extract_image(p, progress_cb)
     if ext in TEXT_EXTS:
         text = p.read_text(encoding="utf-8", errors="replace")
         return ExtractResult(text=text.strip(), method="text", pages=1)
     raise ValueError(f"不支持的文件类型: {ext or p.name}（支持 pdf/docx/txt/md/png/jpg）")
 
 
-def _extract_pdf(p: Path) -> ExtractResult:
+def _extract_pdf(p: Path, progress_cb=None) -> ExtractResult:
+    """PDF 提取（v1.5 页级混合）：每页独立判断——文字层字符足够直读（快、零 OCR 成本），
+    缺字的页（扫描页）才渲染 OCR。文字版 PDF 全程不碰 OCR；混合版各页各走各的。"""
     import pdfplumber
 
+    cfg = config.get()
+    ocr_on = cfg.get("ocr_enabled", True)
+    max_pages = int(cfg.get("ocr_max_pages", 30))
     warnings: list[str] = []
-    texts: list[str] = []
+    if progress_cb:
+        progress_cb("读取 PDF 文字层…")
+    page_texts: list[str] = []
     with pdfplumber.open(str(p)) as pdf:
         n_pages = len(pdf.pages)
-        for page in pdf.pages:
-            texts.append(page.extract_text() or "")
-    full = "\n".join(t for t in texts if t).strip()
-    cfg = config.get()
+        for pi, page in enumerate(pdf.pages):
+            page_texts.append(page.extract_text() or "")
+            if progress_cb and n_pages > 1:
+                progress_cb(f"读取 PDF 文字层（第 {pi + 1}/{n_pages} 页）…")
 
-    if len(full) >= PDF_TEXT_THRESHOLD or not cfg.get("ocr_enabled", True):
-        if len(full) < PDF_TEXT_THRESHOLD:
-            warnings.append("文字层几乎为空且 OCR 已在设置中关闭，建议开启 OCR 后重试")
-        return ExtractResult(text=full, method="pdf_text", pages=n_pages, warnings=warnings)
+    text_pages = [i for i, t in enumerate(page_texts) if len(t.strip()) >= PDF_TEXT_THRESHOLD]
+    scan_pages = [i for i, t in enumerate(page_texts) if len(t.strip()) < PDF_TEXT_THRESHOLD]
 
-    # 扫描版：渲染成图片走内置 OCR
-    max_pages = int(cfg.get("ocr_max_pages", 30))
+    if not scan_pages or not ocr_on:
+        full = "\n".join(page_texts[i].strip() for i in range(n_pages) if page_texts[i].strip())
+        if scan_pages and not ocr_on:
+            warnings.append(f"第 {'、'.join(str(i + 1) for i in scan_pages[:8])} 页疑似扫描页但 OCR 已关闭，该部分未识别")
+        return ExtractResult(text=full.strip(), method="pdf_text", pages=n_pages, warnings=warnings)
+
+    # 混合/扫描：仅对缺字页 OCR
     if n_pages > max_pages:
-        warnings.append(f"共 {n_pages} 页，超过 OCR 上限 {max_pages} 页，仅识别前 {max_pages} 页")
+        warnings.append(f"共 {n_pages} 页，超过上限 {max_pages} 页，仅处理前 {max_pages} 页")
     import pypdfium2 as pdfium
     from . import ocr_engine
 
-    doc = pdfium.PdfDocument(str(p))
-    ocr_lines: list[str] = []
+    ocr_map: dict[int, str] = {}
     low_conf = 0
+    doc = pdfium.PdfDocument(str(p))
     try:
-        for i in range(min(n_pages, max_pages)):
-            page = doc[i]
-            bitmap = page.render(scale=200 / 72)  # 200 DPI，识别精度/速度平衡点
-            pil = bitmap.to_pil()
-            for ln in ocr_engine.ocr_image(pil):
-                ocr_lines.append(ln["text"])
-                if ln["score"] < 0.7:
-                    low_conf += 1
+        ocr_targets = [x for x in scan_pages if x < max_pages]
+        for seq_i, i in enumerate(ocr_targets):
+            if progress_cb:
+                progress_cb(f"OCR 识别扫描页第 {i + 1} 页（共 {len(ocr_targets)} 页需识别，文字页已直读跳过）…")
+            bitmap = doc[i].render(scale=200 / 72)   # 200 DPI 精度/速度平衡点
+            lines = ocr_engine.ocr_image(bitmap.to_pil())
+            ocr_map[i] = "\n".join(ln["text"] for ln in lines)
+            low_conf += sum(1 for ln in lines if ln["score"] < 0.7)
     finally:
         doc.close()
     if low_conf:
-        warnings.append(f"有 {low_conf} 行识别置信度低于 0.7，建议人工核对关键字段")
-    text = "\n".join(ocr_lines).strip()
-    if not text:
-        warnings.append("OCR 未识别到任何文字，文件可能是空白页或加密扫描件")
-    return ExtractResult(text=text, method="pdf_ocr", ocr_used=True,
-                         pages=n_pages, warnings=warnings)
+        warnings.append(f"OCR 有 {low_conf} 行置信度低于 0.7，建议人工核对")
+    parts = []
+    for i in range(min(n_pages, max_pages)):
+        t = page_texts[i].strip() if i in set(text_pages) else ocr_map.get(i, "").strip()
+        if t:
+            parts.append(t)
+    full = "\n".join(parts).strip()
+    if not full:
+        warnings.append("未提取到任何文字（可能是空白/加密扫描件）")
+    method = "pdf_ocr" if not text_pages else "pdf_mixed"
+    return ExtractResult(text=full, method=method, ocr_used=True, pages=n_pages, warnings=warnings)
 
 
 def extract_file_pages(p: str | Path) -> list[ExtractResult]:
@@ -144,41 +160,119 @@ def extract_file_pages(p: str | Path) -> list[ExtractResult]:
     return results
 
 
-def _extract_docx(p: Path) -> ExtractResult:
-    """按文档真实顺序遍历段落与表格（简历常用表格排版，只读 paragraphs 会丢内容）。"""
+def _extract_docx(p: Path, progress_cb=None) -> ExtractResult:
+    """docx 深度提取（v1.5 重写）：
+    1. 全文档流遍历 XML——正文段落、表格、**文本框（w:txbxContent）**一次抓全
+       （大量简历模板把姓名/电话放文本框或页眉，python-docx 的 paragraph.text 抓不到）
+    2. 页眉/页脚（含首页/偶数页变体）
+    3. 文本仍缺关键特征（姓名/电话都找不到）→ 内嵌图片 OCR 补全（联系方式截图场景）
+    """
     from docx import Document
-    from docx.document import Document as _Doc
     from docx.oxml.ns import qn
-    from docx.table import Table
-    from docx.text.paragraph import Paragraph
 
     doc = Document(str(p))
-    parts: list[str] = []
+    warnings: list[str] = []
 
-    def iter_blocks(parent: _Doc):
-        body = parent.element.body
-        for child in body.iterchildren():
-            if child.tag == qn("w:p"):
-                yield Paragraph(child, parent)
-            elif child.tag == qn("w:tbl"):
-                yield Table(child, parent)
+    # --- 文档流遍历：按 w:p 聚行，w:t 追加（文本框嵌套的 w:p 自然成行，无重复）---
+    lines: list[str] = []
+    buf: list[str] = []
 
-    for block in iter_blocks(doc):
-        if isinstance(block, Paragraph):
-            t = block.text.strip()
+    def _flush():
+        if buf:
+            t = "".join(buf).strip()
             if t:
-                parts.append(t)
-        else:  # Table：单元格按行拼接，制表符分隔
-            for row in block.rows:
-                cells = [c.text.strip().replace("\n", " ") for c in row.cells]
-                line = "\t".join(c for c in cells if c)
-                if line:
-                    parts.append(line)
-    text = "\n".join(parts).strip()
+                lines.append(t)
+            buf.clear()
+
+    W_P, W_T, W_TAB, W_BR, W_TBL, W_TR, W_TC = (qn("w:p"), qn("w:t"), qn("w:tab"),
+                                                qn("w:br"), qn("w:tbl"), qn("w:tr"), qn("w:tc"))
+    # 表格内的段落不断行：表格行按单元格 tab 拼接成一行
+    # （简历教育/工作段常用表格排版，"2015.09-2019.06\t合肥工业大学\t专业\t本科"必须同行，
+    #   拆散会导致毕业年份等跨列模式全部失配）
+    tbl_paras = set()
+    for tbl in doc.element.body.iter(W_TBL):
+        for pp in tbl.iter(W_P):
+            tbl_paras.add(id(pp))
+    for el in doc.element.body.iter():
+        tag = el.tag
+        if tag == W_P:
+            if id(el) not in tbl_paras:
+                _flush()
+        elif tag == W_T:
+            buf.append(el.text or "")
+        elif tag in (W_TAB, W_BR):
+            buf.append(" ")
+        elif tag == W_TC:
+            buf.append("\t")
+        elif tag == W_TR:
+            _flush()
+    _flush()
+
+    # --- 页眉页脚 ---
+    try:
+        for sec in doc.sections:
+            for hf in (sec.header, sec.footer, sec.first_page_header, sec.first_page_footer):
+                if hf is None:
+                    continue
+                for para in hf.paragraphs:
+                    t = para.text.strip()
+                    if t and t not in lines:
+                        lines.append(t)
+                for tbl in hf.tables:
+                    for row in tbl.rows:
+                        t = "\t".join(c.text.strip() for c in row.cells if c.text.strip())
+                        if t and t not in lines:
+                            lines.append(t)
+    except Exception as e:
+        warnings.append(f"页眉页脚提取跳过: {type(e).__name__}")
+
+    text = "\n".join(lines).strip()
+
+    # --- 关键特征缺失 → 内嵌图片 OCR 补全（姓名/电话可能在图片里）---
+    import re as _re
+    has_phone = bool(_re.search(r"1[3-9]\d{9}", text))
+    has_name_hint = bool(_re.search(r"姓\s*名|^[\u4e00-\u9fa5]{2,4}$", text, _re.M))
+    cfg = config.get()
+    if cfg.get("ocr_enabled", True) and (not has_phone or not has_name_hint):
+        try:
+            if progress_cb:
+                progress_cb("正文缺联系方式特征，OCR 识别文档内嵌图片…")
+            img_text = _docx_images_text(doc)
+            if img_text:
+                # 去重合并：图片里已在文本出现的行跳过
+                seen = set(lines)
+                extra = [ln for ln in img_text.splitlines() if ln.strip() and ln.strip() not in seen]
+                if extra:
+                    text = text + "\n" + "\n".join(extra)
+                    warnings.append(f"已从文档内嵌图片补充识别 {len(extra)} 行（联系方式等常以图片形式放在简历头部）")
+        except Exception as e:
+            warnings.append(f"内嵌图片识别跳过: {type(e).__name__}: {e}")
+
     if not text:
-        # 文本为空的 docx 可能整页是图片 → 抽内嵌图片 OCR
         return _extract_docx_embedded_images(p, doc)
-    return ExtractResult(text=text, method="docx", pages=1)
+    return ExtractResult(text=text, method="docx", pages=1, warnings=warnings)
+
+
+def _docx_images_text(doc) -> str:
+    """提取 docx 全部内嵌图片并 OCR，拼接文本（跳过超小装饰图）。"""
+    from . import ocr_engine
+    import io
+    from PIL import Image
+    out: list[str] = []
+    for rel in doc.part.rels.values():
+        if "image" not in rel.reltype:
+            continue
+        try:
+            blob = rel.target_part.blob
+            im = Image.open(io.BytesIO(blob))
+            if im.width < 80 or im.height < 40:   # 图标/分隔线级别的小图跳过
+                continue
+            for ln in ocr_engine.ocr_image(im):
+                if ln["score"] >= 0.5:
+                    out.append(ln["text"])
+        except Exception:
+            continue
+    return "\n".join(out)
 
 
 def _extract_docx_embedded_images(p: Path, doc) -> ExtractResult:
@@ -200,8 +294,10 @@ def _extract_docx_embedded_images(p: Path, doc) -> ExtractResult:
                          warnings=[] if text else ["docx 中无文字也未从内嵌图片识别到内容"])
 
 
-def _extract_image(p: Path) -> ExtractResult:
+def _extract_image(p: Path, progress_cb=None) -> ExtractResult:
     from . import ocr_engine
+    if progress_cb:
+        progress_cb("OCR 识别图片简历…")
     lines = ocr_engine.ocr_image(str(p))
     text = "\n".join(ln["text"] for ln in lines).strip()
     low = sum(1 for ln in lines if ln["score"] < 0.7)

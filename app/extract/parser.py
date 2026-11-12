@@ -76,6 +76,13 @@ CERT_DICT = [
     ("叉车证", r"叉车证"),
     ("PMP", r"(?<![a-z])pmp(?![a-z])"),
     ("软考证书", r"软件水平考试|软考(中级|高级)?"),
+    ("阿里云认证", r"阿里云\s*(ac|acp|ace)?\s*(专项技能认证|认证)?|(?<![a-z])aliyun(?![a-z])"),
+    ("华为认证", r"华为认证|(?<![a-z])hcia|hcip|hcie(?![a-z])"),
+    ("腾讯云认证", r"腾讯云认证|(?<![a-z])tencent\s*cloud(?![a-z])"),
+    ("AWS认证", r"(?<![a-z])aws\s*(认证|certified)?(?![a-z])"),
+    ("思科认证", r"思科认证|(?<![a-z])ccna|ccnp|ccie(?![a-z])"),
+    ("Oracle认证", r"oracle\s*认证|(?<![a-z])ocp(?![a-z])"),
+    ("红帽认证", r"红帽认证|(?<![a-z])rhce|rhcsa(?![a-z])"),
     ("六西格玛黑带", r"六西格玛黑带"),
     ("六西格玛绿带", r"六西格玛绿带"),
     ("雅思", r"雅思\s*\d(?:\.\d)?|(?<![a-z])ielts(?![a-z])"),
@@ -111,6 +118,7 @@ RE_NAME_LABEL = re.compile(r"姓\s*名\s*[:：]?\s*([\u4e00-\u9fa5·]{2,6})")
 RE_NAME_SELF = re.compile(r"(?:我叫|我是)\s*([\u4e00-\u9fa5·]{2,6})")
 RE_AGE = re.compile(r"(?:年\s*龄|age)\s*[:：]?\s*(\d{2})\s*岁?|(\d{2})\s*岁", re.I)
 RE_BIRTH = re.compile(r"(19[789]\d|200\d)\s*[年./\-]?\s*(?:\d{1,2}\s*月?)?\s*(?:出生|生)")
+RE_BIRTH_LABEL = re.compile(r"(?:出生年月|出生日期|生日|出生)\s*[:：]?\s*(19[789]\d|200\d|201\d)\s*[年./\-]\s*(\d{1,2})")
 RE_WORKYEARS = re.compile(
     r"(?<![\d.])(\d{1,2}(?:\.\d)?)\s*年(?:以上)?(?:[\u4e00-\u9fa5A-Za-z]{0,12}?)经[验历]"
     r"|工作(?:年|时)限\s*[:：]?\s*(?<![\d.])(\d{1,2}(?:\.\d)?)\s*年?")
@@ -138,8 +146,14 @@ RE_EXPECT_SALARY = re.compile(
     r"|(?:希望|期望|想要)\s*(\d+(?:\.\d+)?\s*[kK千wW万])\s*(?:往上|以上|起|左右)?")
 RE_COMPANY = re.compile(
     r"([\u4e00-\u9fa5A-Za-z0-9（）()]{2,24}?(?:有限公司|股份有限公司|集团有限公司|集团|公司|银行|事务所|研究院|研究所|机械厂|工厂|医院|学校|超市|酒店))")
+# 企业词根 + 同行紧跟年份区间的裸名公司（"宁波市龙嘉动力科技 2023.07-至今"，无"公司"后缀）
+RE_COMPANY_BARE = re.compile(
+    r"([\u4e00-\u9fa5]{3,16}?(?:科技|动力|制造|电子|机械|信息|网络|数据|贸易|实业|装备|智能|医药|医疗|建筑|建材|物流|文化|传媒|咨询|广告|教育|培训|餐饮|食品|纺织|服装|化工|能源|环保|汽车|电气|五金|塑料|包装|印刷|家居|家具|体育|旅游|酒店|物业|证券|保险|投资|地产|置业|农业|渔业|模具|注塑|铸造|模具))"
+    r"\s*(?=\d{4}\s*[年./\-])")
+# 公司裸词拒绝名单（strip 前缀噪音后仅剩泛称的不是公司名）
+_COMPANY_JUNK = {"公司", "本公司", "贵公司", "我司", "该公司", "集团公司", "enterprises"}
 RE_TITLE_WORD = re.compile(
-    r"(?:担任|任职|职位|岗位)\s*[:：]?\s*([^\n，,;；。]{2,25})"
+    r"(?:担任|任职|职位|岗位)\s*[:：]?\s*([^\n，,;；。、]{2,25})"
     r"|([\u4e00-\u9fa5A-Za-z]{0,8}(?:工程师|经理|总监|主管|专员|架构师|设计师|顾问|讲师|教师|技术员|操作工|会计|出纳|助理|总裁|厂长|部长|科长|班长|组长|开发|程序员|分析师|运营|编辑|翻译|护士|医师|药师|司机|焊工|电工|钳工|普工|店员|店长|保安|厨师))")
 RE_CITY = re.compile(
     r"(?:现居|居住在?|目前住在?|住在|生活在|所在地|所在城市|城市|现所在地|工作地点|意向城市|期望城市|base)\s*[:：]?\s*([\u4e00-\u9fa5]{2,10}?)(?:市|[，,。\n|｜]|$)", re.I)
@@ -195,7 +209,13 @@ def _section(text: str, heads: list[str], stop: list[str] | None = None) -> str:
 def _guess_name(text: str, filename: str) -> str:
     # 常见误抓黑名单：非姓名的两字行（民族/政治面貌/婚育等）
     BLACKLIST = {"党员", "群众", "团员", "汉族", "回族", "满族", "未婚", "已婚", "离异",
-                 "男", "女", "简历", "求职", "应聘", "自荐", "本人", "人才", "应届生"}
+                 "男", "女", "简历", "求职", "应聘", "自荐", "本人", "人才", "应届生",
+                 # 简历小节标题词绝不能是人名（真实案例："教育背景"曾被抓为姓名）
+                 "教育背景", "教育经历", "工作经历", "工作经验", "职业经历", "个人荣誉", "荣誉奖项",
+                 "获奖情况", "自我评价", "个人评价", "个人技能", "专业技能", "技能特长", "技术专长",
+                 "项目经验", "项目经历", "项目实践", "基本信息", "个人信息", "个人概况", "联系方式",
+                 "求职意向", "期望职位", "证书", "荣誉证书", "资格证书", "培训经历", "语言能力",
+                 "PERSONAL", "RESUME", "工作总结", "主要业绩", "社会实践", "校园经历"}
     m = RE_NAME_LABEL.search(text)
     if m:
         return m.group(1)
@@ -245,6 +265,14 @@ def _guess_gender(text: str) -> str:
 
 
 def _guess_age(text: str) -> int | None:
+    from datetime import datetime as _dt
+    m = RE_BIRTH_LABEL.search(text)
+    if m:
+        birth_year = int(m.group(1))
+        if 1950 <= birth_year <= _dt.now().year:
+            age = _dt.now().year - birth_year
+            if 16 <= age <= 70:
+                return age
     m = RE_AGE.search(text)
     if m:
         return int(m.group(1) or m.group(2))
@@ -300,9 +328,12 @@ def _strip_prefix_noise(s: str) -> str:
         r"|跳到|跳槽至?|转去|转到|去了|进入|后到|随后|之后)+", "", s.strip())
 
 
-def _strip_title_noise(s: str) -> str:
-    """剥离职位前噪音（"做税务顾问"→"税务顾问"，"是财务经理"→"财务经理"）。"""
-    return re.sub(r"^(?:是|做|担任|出任|任职|任|当)+[:：]?\s*", "", s.strip())
+def _strip_title_noise(t: str) -> str:
+    """职位值清洗：去"是/做/担任"等引导词；整句动词开头的不是职位（"调整…流程"类垃圾）。"""
+    t = re.sub(r"^(?:是|做|担任|出任|任职|任|当)+[:：]?\s*", "", (t or "").strip())
+    if re.match(r"^(?:调整|变更|负责|管理|优化|提升|完善|建立|构建|打通|实现|处理|纠正|参与|提供|突出|结合|编写|推动|推进|协助|相关|描述)", t):
+        return ""
+    return t
 
 
 def _guess_work_years(text: str, work_history: list[dict]) -> float | None:
@@ -402,15 +433,26 @@ def _guess_languages(text: str) -> str:
     return "、".join(found[:6])
 
 
+def _find_company(scope: str) -> str:
+    """在文本段中找公司名：标准后缀优先，裸名企业词根+年份兜底；过滤泛称裸词。"""
+    for m in RE_COMPANY.finditer(scope):
+        cand = _strip_prefix_noise(m.group(1))
+        if cand and cand.lower() not in _COMPANY_JUNK and len(cand) > 2:
+            return cand
+    m = RE_COMPANY_BARE.search(scope)
+    if m:
+        cand = _strip_prefix_noise(m.group(1))
+        if cand and cand.lower() not in _COMPANY_JUNK:
+            return cand
+    return ""
+
+
 def _guess_company_title(text: str) -> tuple[str, str]:
     """从工作经历小节取最近一段公司与职位（小节内第一次出现≈最近）。"""
     sec = _section(text, ["工作经历", "工作经验", "职业经历", "工作经历/项目经历"]) or text
-    company = ""
-    m = RE_COMPANY.search(sec)
-    if m:
-        company = _strip_prefix_noise(m.group(1))
+    company = _find_company(sec)
     title = ""
-    m = re.search(r"(?:担任|任职|职位|岗位)\s*[:：]?\s*([^\n，,;；。]{2,25})", sec)
+    m = re.search(r"(?:担任|任职|职位|岗位)\s*[:：]?\s*([^\n，,;；。、]{2,25})", sec)
     if m:
         title = _strip_title_noise(re.split(r"\s{2,}", m.group(1).strip())[0][:25])
     else:
@@ -444,19 +486,16 @@ def _guess_work_history(text: str) -> list[dict]:
         if not pm:
             continue
         # 排除教育段落行（"2012.09—2016.06 南京理工大学 …"不是工作经历）
-        if re.search(r"大学|学院|学校|职业技术学校|主修|专业[:：]|学历", line) and not RE_COMPANY.search(line):
+        if re.search(r"大学|学院|学校|职业技术学校|技工学校|主修|专业|学历|文凭|学位|在读|毕业院校", line) \
+                and not RE_COMPANY.search(line) and not RE_COMPANY_BARE.search(line):
             continue
         period = re.sub(r"\s+", "", pm.group(0))
-        # 公司：同行优先，其次下两行
-        company = ""
-        cm = RE_COMPANY.search(line[pm.end():]) or RE_COMPANY.search(line)
-        if cm:
-            company = _strip_prefix_noise(cm.group(1))
-        else:
+        # 公司：同行（区间前后都找）优先，其次下两行；标准后缀与裸名词根都认
+        company = _find_company(line)
+        if not company:
             for j in range(idx + 1, min(idx + 3, len(lines))):
-                cm = RE_COMPANY.search(lines[j])
-                if cm:
-                    company = _strip_prefix_noise(cm.group(1))
+                company = _find_company(lines[j])
+                if company:
                     break
         # 职位：同行公司之后的文本 → 下两行的职位词 → 「担任」标签
         title = ""

@@ -29,7 +29,14 @@ LLM_FIELDS = [
     "expected_salary", "skills", "certificates", "languages", "summary",
 ]
 
-PROMPT_TEMPLATE = """你是一个简历信息抽取引擎。从下面的简历文本中抽取字段，只输出一个 JSON 对象，不要输出任何其他文字或代码块标记。
+SYSTEM_PROMPT = "你是简历信息抽取引擎。只输出一个 JSON 对象，禁止输出解释、markdown 或代码块标记。找不到的字段填 null，禁止编造。"
+
+FEW_SHOT = """示例（学习输出格式与字段口径）：
+简历片段："我叫陈晓东，男，1996年生，手机13712345678，现居杭州，本科毕业于浙江工业大学自动化专业，2018年毕业。2018.07-至今 在杭州大华技术股份有限公司做嵌入式工程师，会C语言、STM32、Linux驱动。期望职位：嵌入式开发，期望薪资18-25K。"
+输出：{"name":"陈晓东","gender":"男","age":29,"phone":"13712345678","email":null,"wechat":null,"city":"杭州","hometown":null,"political_status":null,"education":"本科","school":"浙江工业大学","major":"自动化","graduate_year":2018,"work_years":7,"current_company":"杭州大华技术股份有限公司","current_title":"嵌入式工程师","expected_title":"嵌入式开发","expected_salary":"18-25K","skills":["C语言","STM32","Linux驱动"],"certificates":[],"languages":[],"work_history":[{"period":"2018.07-至今","company":"杭州大华技术股份有限公司","title":"嵌入式工程师"}],"summary":"7年嵌入式开发经验"}
+"""
+
+PROMPT_TEMPLATE = """从下面的简历文本中抽取字段，只输出一个 JSON 对象，不要输出任何其他文字或代码块标记。
 
 字段要求（找不到的填 null，不要编造；work_history 按时间倒序，最多5段）：
 {{
@@ -68,23 +75,46 @@ def find_model() -> Optional[Path]:
     return ggufs[0] if ggufs else None
 
 
+_llm_fingerprint: Optional[str] = None   # 已加载实例的配置指纹（模型路径+GPU层数）
+
+
+def _fingerprint() -> str:
+    cfg = config.get()
+    m = find_model()
+    return f"{m}|{cfg.get('llm_gpu_layers', 0)}"
+
+
+def reset_llm() -> None:
+    """卸载已加载模型（下载/导入新模型、切换路径或 GPU 设置后调用；下次使用自动按新配置加载）。"""
+    global _llm, _loaded_path, _llm_fingerprint, _load_error
+    with _lock:
+        _llm = None
+        _loaded_path = None
+        _llm_fingerprint = None
+        _load_error = None
+
+
 def _get_llm():
-    """懒加载 Llama 实例；失败记录原因并抛 RuntimeError。"""
-    global _llm, _load_error, _loaded_path
-    if _llm is not None:
+    """懒加载 Llama 实例；配置指纹变化（换模型/换GPU层数）自动重载——设置切换即时生效。"""
+    global _llm, _load_error, _loaded_path, _llm_fingerprint
+    fp = _fingerprint()
+    if _llm is not None and _llm_fingerprint == fp:
         return _llm
     with _lock:
-        if _llm is not None:
+        if _llm is not None and _llm_fingerprint == fp:
             return _llm
+        if _llm is not None:      # 指纹变了 → 卸载旧实例，按新配置重载
+            _llm = None
+            _loaded_path = None
         try:
             from llama_cpp import Llama
         except ImportError as e:
-            _load_error = "llama-cpp-python 未安装（pip install llama-cpp-python，详见 README「AI 智能解析」）"
+            _load_error = "llama-cpp-python 未安装（run.bat/run.sh 会自动安装；或 pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu）"
             raise RuntimeError(_load_error) from e
         model = find_model()
         if model is None:
             _load_error = f"未找到 GGUF 模型文件，请将模型放入 {config.DATA_DIR / 'models'}/（推荐 Qwen2.5-1.5B-Instruct q4_k_m）"
-            raise RuntimeError(_load_error)
+            raise RuntimeError(_load_error) from e
         try:
             import os
             gpu_layers = int(config.get().get("llm_gpu_layers", 0) or 0)
@@ -96,10 +126,12 @@ def _get_llm():
                 verbose=False,
             )
             _loaded_path = str(model)
+            _llm_fingerprint = fp
             _load_error = None
         except Exception as e:
             _load_error = f"{type(e).__name__}: {e}"
             _llm = None
+            _llm_fingerprint = None
             raise RuntimeError(f"模型加载失败: {_load_error}") from e
     return _llm
 
@@ -295,13 +327,19 @@ def extract(text: str, max_input_chars: int = 3500) -> Optional[dict]:
                       _last_api_usage, time.time() - t0)
         return obj
     llm = _get_llm()
-    prompt = PROMPT_TEMPLATE.format(text=text[:max_input_chars])
+    user_prompt = FEW_SHOT + "\n" + PROMPT_TEMPLATE.format(text=text[:max_input_chars])
     with _lock:
-        resp = llm(prompt, max_tokens=900, temperature=0.1, stop=["</s", "\n\n\n"])
+        resp = llm.create_chat_completion(
+            messages=[{"role": "system", "content": SYSTEM_PROMPT},
+                      {"role": "user", "content": user_prompt}],
+            max_tokens=1000, temperature=0.1, stream=False)
     usage = (resp or {}).get("usage") or {}
     _record_usage("local", Path(_loaded_path or "").name, "resume_parse",
                   usage, time.time() - t0)
-    raw = resp["choices"][0]["text"] if resp.get("choices") else ""
+    try:
+        raw = resp["choices"][0]["message"]["content"] or ""
+    except (KeyError, IndexError, TypeError):
+        raw = ""
     obj = _extract_json(raw)
     if not obj:
         return None
@@ -452,23 +490,27 @@ def fetch_api_models(base: str, key: str) -> list[str]:
 
 
 def enhance(text: str, rule_result: dict) -> tuple[dict, bool]:
-    """规则结果 + LLM 分层融合。返回 (融合后dict, llm_used)。LLM 失败时原样返回规则结果。
+    """规则结果 + AI 分层融合。返回 (融合后dict, llm_used)。AI 失败时原样返回规则结果。
 
     信任分层（实测驱动：规则正则在非标简历上会抓到垃圾值，如姓名抓到"党员"、
     学校抓到"年在安徽财经大学"；而 LLM 对数字/邮箱可能幻觉改写）：
-    - LLM_OVERLAY：语义类字段，LLM 值非空即覆盖规则值（修正"非空但错误"）
-    - RULE_KEEP：  数字/邮箱类字段，规则正则极稳，LLM 仅在规则为空时补
+    - LLM_OVERLAY：语义类字段，AI 值非空即覆盖规则值（修正"非空但错误"）
+    - RULE_KEEP：  数字/邮箱类字段，规则正则极稳，AI 仅在规则为空时补
     - MERGE_LIST： 技能/证书/语言，两侧归一化合并去重
+    - TIME_FIELDS：「至今」锚点命中时规则优先（小模型对时间先后判断不稳）
+
+    v1.5：产出 _ai_trace 工作明细（引擎/模型/耗时/tokens/逐字段改动 before→after），
+    前端「AI 工作明细」展示——让用户看懂大模型干了什么、改了什么、为什么。
     """
     LLM_OVERLAY = {"name", "gender", "city", "hometown", "political_status", "education",
                    "school", "major", "expected_title",
                    "expected_salary", "summary"}
     RULE_KEEP = {"phone", "email", "age", "graduate_year"}
     MERGE_LIST = {"skills", "certificates", "languages"}
-    # 时间语义字段：1.5B 小模型对"哪段是最近的工作"判断不稳（实测会把两年前旧公司当现任），
-    # 而规则的「至今」锚点命中时非常可靠 —— 锚点命中则规则优先，否则 LLM 优先。
     TIME_FIELDS = {"current_company", "current_title", "work_history", "work_years"}
 
+    t0 = time.time()
+    st = status()
     try:
         llm_fields = extract(text)
     except Exception:
@@ -478,70 +520,72 @@ def enhance(text: str, rule_result: dict) -> tuple[dict, bool]:
     merged = dict(rule_result)
     changed = 0
     anchor_now = bool(rule_result.get("_anchor_now"))
+    trace: list[dict] = []
 
     def _empty(v):
         return v is None or (isinstance(v, str) and not v.strip())
 
-    def _norm_key(s: str) -> str:
-        # 归一去重键："CET-6"≈"CET6"、"注册会计师专业阶段"≈"注册会计师(专业阶段)"取包含关系
-        return re.sub(r"[\s\-—_（）()]", "", str(s)).lower()
+    def _norm_key(x: str) -> str:
+        return re.sub(r"[\s\-—_（）()]", "", str(x)).lower()
+
+    def _set(k: str, v, rule: str):
+        nonlocal changed
+        before = merged.get(k)
+        merged[k] = v
+        changed += 1
+        trace.append({"field": k, "before": before if not _empty(before) else None,
+                      "after": v, "rule": rule})
 
     for k, v in llm_fields.items():
         cur = merged.get(k)
         if k in TIME_FIELDS:
             if k == "work_years":
-                # 年限：规则显式表述或 LLM 语义值都可能偏小，取两者较大（范围已由 _normalize 校验）
                 rv, lv = cur, v
                 if isinstance(rv, (int, float)) and isinstance(lv, (int, float)) and lv > rv:
-                    merged[k] = lv
-                    changed += 1
+                    _set(k, lv, "年限取较大值（规则与AI各自可能偏小）")
                 elif _empty(rv) and not _empty(lv):
-                    merged[k] = lv
-                    changed += 1
+                    _set(k, lv, "规则未识别，AI 补充")
             elif anchor_now:
-                if _empty(cur) and not _empty(v):   # 锚点命中：规则优先，LLM 只补空
-                    merged[k] = v
-                    changed += 1
+                if _empty(cur) and not _empty(v):
+                    _set(k, v, "规则空，AI 补充")
+                # 锚点命中：规则值优先，AI 不覆盖（小模型时间判断不稳）
             else:
-                if not _empty(v) and cur != v:      # 无锚点：LLM 优先
-                    merged[k] = v
-                    changed += 1
+                if not _empty(v) and cur != v:
+                    _set(k, v, "无「至今」锚点，AI 判断优先")
         elif k in LLM_OVERLAY:
             if not _empty(v) and cur != v:
-                merged[k] = v
-                changed += 1
+                _set(k, v, "AI 语义理解覆盖规则值" if not _empty(cur) else "规则未识别，AI 补充")
         elif k in RULE_KEEP:
             if _empty(cur) and not _empty(v):
-                merged[k] = v
-                changed += 1
+                _set(k, v, "规则未识别，AI 补充")
         elif k in MERGE_LIST and isinstance(v, str):
-            if _empty(cur):
-                merged[k] = v
-                changed += 1
-            else:
-                parts = [x.strip() for x in re.split(r"[、,，]", cur) if x.strip()]
-                have = {_norm_key(x) for x in parts}
-                extra = []
-                for x in (y.strip() for y in re.split(r"[、,，]", v)):
-                    nk = _norm_key(x)
-                    if not x or nk in have:
-                        continue
-                    # 包含关系也算重复（"注册会计师专业阶段" vs "注册会计师"）
-                    if any(nk in h or h in nk for h in have):
-                        continue
-                    extra.append(x)
-                    have.add(nk)
-                if extra:
-                    merged[k] = cur + "、" + "、".join(extra[:8])
-                    changed += 1
-    if changed:
-        weights = [
-            (bool(merged.get("name")), .20), (bool(merged.get("phone")), .14),
-            (bool(merged.get("email")), .08), (bool(merged.get("education")), .09),
-            (merged.get("work_years") is not None, .07), (bool(merged.get("skills")), .09),
-            (bool(merged.get("current_company")), .08), (bool(merged.get("current_title")), .05),
-            (bool(merged.get("city")), .04), (bool(merged.get("expected_title") or merged.get("summary")), .04),
-            (bool(merged.get("work_history")), .06), (bool(merged.get("school")), .06),
-        ]
-        merged["parse_confidence"] = round(sum(w for ok, w in weights if ok), 3)
+            cur_items = [x for x in re.split(r"[、,，;；/|]", str(cur or "")) if x.strip()]
+            ai_items = [x for x in re.split(r"[、,，;；/|]", v) if x.strip()]
+            if k == "languages":
+                # AI 常把编程语言混进"语言能力"，按词典过滤（保留 英语/日语/CET/N1 等真语言项）
+                _prog = {"python", "java", "c++", "c", "c#", "javascript", "js", "go", "golang",
+                         "rust", "php", "sql", "html", "css", "vue", "react", "typescript", "ts"}
+                ai_items = [x for x in ai_items
+                            if x.strip().lower() not in _prog
+                            and re.search(r"[语英日俄法德西韩朝意葡]|CET|TEM|雅思|托福|IELTS|TOEFL|N[1-5]|普通话|母语", x, re.I)]
+            keys = {_norm_key(x) for x in cur_items}
+            added = [x for x in ai_items if _norm_key(x) not in keys
+                     and not any(_norm_key(x) in kk or kk in _norm_key(x) for kk in keys)]
+            if added:
+                _set(k, "、".join(cur_items + added), f"AI 补充合并去重 +{'、'.join(added)[:40]}")
+
+    elapsed = round(time.time() - t0, 1)
+    merged["_ai_trace"] = {
+        "engine": "本地模型" if st.get("mode") != "api" else "外部 API",
+        "model": st.get("model_name") or st.get("api_model") or "",
+        "elapsed_s": elapsed,
+        "changed_fields": changed,
+        "changes": trace[:30],
+        "anchor_protected": anchor_now,
+        "explain": (f"规则解析先跑（置信度 {rule_result.get('parse_confidence')}），"
+                    f"AI 引擎（{st.get('model_name') or st.get('api_model') or '-'}）再通读全文抽取 22 字段，"
+                    f"按信任分层融合：语义字段 AI 优先、电话/邮箱等规则优先防幻觉、"
+                    f"{'当前公司命中「至今」锚点由规则保护、' if anchor_now else ''}"
+                    f"本次 AI 修改/补充了 {changed} 个字段，耗时 {elapsed}s。"),
+    }
     return merged, changed > 0

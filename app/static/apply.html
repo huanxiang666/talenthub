@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>简历投递 — TalentHub</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231d9bf0'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3ET%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2360a5fa'/%3E%3Cstop offset='.55' stop-color='%233b82f6'/%3E%3Cstop offset='1' stop-color='%238b5cf6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='48' height='48' rx='14' fill='url(%23g)'/%3E%3Cpath d='M14 17h20M24 17v16' stroke='white' stroke-width='4.6' stroke-linecap='round'/%3E%3Ccircle cx='33.5' cy='31.5' r='3.6' fill='%23fbbf24'/%3E%3C/svg%3E">
 <style>
 :root {
   --bg: #f7f9f9; --surface: #fff; --ink: #0f1419; --ink2: #38444d; --muted: #536471;
@@ -20,10 +20,9 @@
 body { font-family: var(--font); background: var(--bg); color: var(--ink); font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
 .wrap { max-width: 640px; margin: 0 auto; padding: 24px 16px 80px; }
 .hero { text-align: center; padding: 34px 16px 26px; }
-.hero-logo { width: 64px; height: 64px; border-radius: 20px; margin: 0 auto 18px;
-  background: linear-gradient(145deg, #4ab3f4, #1d9bf0 55%, #1a8cd8); color: #fff;
-  font-weight: 800; font-size: 32px; display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 8px 24px rgba(29,155,240,.35); }
+.hero-logo { width: 64px; height: 64px; margin: 0 auto 18px; border-radius: 20px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  filter: drop-shadow(0 8px 20px rgba(99,130,246,.4)); }
 .hero h1 { font-size: 24px; font-weight: 800; letter-spacing: -.3px; }
 .hero p { color: var(--muted); margin-top: 6px; font-size: 14px; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 22px; box-shadow: 0 1px 3px rgba(15,20,25,.05); margin-bottom: 16px; }
@@ -83,7 +82,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--ink); font-
 <body>
 <div class="wrap">
   <div class="hero">
-    <div class="hero-logo">T</div>
+    <div class="hero-logo" aria-hidden="true"><svg viewBox="0 0 48 48" width="64" height="64"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7db4fc"/><stop offset=".55" stop-color="#3b82f6"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="48" height="48" rx="14" fill="url(#lg)"/><path d="M14 17h20M24 17v16" stroke="#fff" stroke-width="4.6" stroke-linecap="round"/><circle cx="33.5" cy="31.5" r="3.6" fill="#fbbf24"/></svg></div>
     <h1 id="company-name">企业简历投递</h1>
     <p id="hero-sub">投递后可随时凭「手机号 + 查询码」查看进度、修改资料</p>
   </div>

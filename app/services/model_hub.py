@@ -401,6 +401,12 @@ def _download_worker(url: str, dest: Path, declared_mb: int):
         with _state_lock:
             _state.update(active=False, done_file=str(dest), error="",
                           speed_bps=_state["downloaded"] / max(time.time() - t0, 0.1))
+        # 新模型落盘 → 卸载旧实例，下次解析自动加载新模型（切换即时生效）
+        try:
+            from ..extract import llm_parser
+            llm_parser.reset_llm()
+        except Exception:
+            pass
     except Exception as e:
         try:
             tmp.unlink(missing_ok=True)
@@ -499,5 +505,10 @@ def import_model_stream(filename: str, fileobj) -> dict:
         except OSError:
             pass
         raise
+    try:
+        from ..extract import llm_parser
+        llm_parser.reset_llm()   # 导入即生效
+    except Exception:
+        pass
     return {"imported": True, "file": name, "size_mb": round(written / 1048576, 1),
             "dest": str(dest)}

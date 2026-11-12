@@ -333,6 +333,10 @@ def put_settings(body: SettingsIn):
                 _err("自定义状态格式不正确")
             patch["custom_statuses"] = "、".join(items)
     saved = config.save(patch)
+    # AI 引擎/模型路径/GPU 层数变化 → 卸载已加载模型，下次调用按新配置自动重载（切换即时生效）
+    if any(k in patch for k in ("llm_engine", "llm_model_path", "llm_gpu_layers",
+                                "llm_api_base", "llm_api_key", "llm_api_model", "llm_enabled")):
+        llm_parser.reset_llm()
     need_restart = [k for k in ("host", "port", "apply_enabled", "apply_port") if k in patch]
     return {"config": saved, "need_restart": need_restart}
 
@@ -706,6 +710,22 @@ def get_application_file(aid: int, inline: int = 1, mode: str = ""):
 
 # ---------- 简历导入（PDF/Word/图片 → 解析草稿 → 批量入库） ----------
 
+# 导入进度（单任务模型：UI 一次只有一个导入在跑；前端轮询显示"正在做什么"）
+_import_state_lock = threading.Lock()
+_import_state: dict = {"active": False, "total": 0, "done": 0, "current_file": "",
+                       "step": "", "split_scan": False, "force_llm": False}
+
+
+@app.get("/api/import/progress")
+def import_progress():
+    with _import_state_lock:
+        return dict(_import_state)
+
+
+def _set_progress(**kw):
+    with _import_state_lock:
+        _import_state.update(kw)
+
 @app.post("/api/import/resumes")
 def import_resumes(files: list[UploadFile] = File(...), force_llm: str = Form("0"),
                    split_scan: str = Form("0")):
@@ -728,13 +748,19 @@ def import_resumes(files: list[UploadFile] = File(...), force_llm: str = Form("0
     want_llm_all = force_llm == "1"
     want_split = split_scan == "1"
     llm_errors: list[str] = []
+    _set_progress(active=True, total=len(files), done=0, current_file="", step="准备解析…",
+                  split_scan=want_split, force_llm=want_llm_all)
 
     def _parse_one(text: str, fname: str, method: str, ocr_used: bool,
                    pages: int, warnings: list[str], stored: str) -> dict:
         """单份文本 → 解析（+AI 增强）→ 草稿 item。"""
+        _set_progress(step="规则解析字段…", current_file=fname)
         parsed = parser.parse_resume(text, fname)
         llm_used = False
         if llm_ok and (want_llm_all or parsed.get("parse_confidence", 0) < llm_min):
+            engine = "外部 API" if cfg.get("llm_engine") == "api" else "本地模型"
+            _set_progress(step=f"AI 深度解析中（{engine}，本地小模型约需 30-90 秒/份，请耐心等待）…",
+                          current_file=fname)
             try:
                 parsed, llm_used = llm_parser.enhance(text, parsed)
             except Exception as e:  # AI 失败不阻断：回退纯规则结果，记警告
@@ -767,9 +793,12 @@ def import_resumes(files: list[UploadFile] = File(...), force_llm: str = Form("0
             dest = config.UPLOAD_DIR / f"{ts}_{fname}"
             dest.write_bytes(data)
             stored = str(dest)
+            _set_progress(current_file=fname, step="提取文本…")
+            _cb = lambda msg: _set_progress(step=msg, current_file=fname)  # noqa: E731
 
             # ---- 拆分模式：PDF 每页独立成一份草稿 ----
             if want_split and ext == ".pdf":
+                _set_progress(step="拆分模式：逐页提取（每页独立 OCR+解析）…", current_file=fname)
                 page_results = loader.extract_file_pages(dest)
                 made = 0
                 skipped: list[str] = []
@@ -798,7 +827,7 @@ def import_resumes(files: list[UploadFile] = File(...), force_llm: str = Form("0
                 # 非 PDF 不支持拆分，按普通模式继续（下方统一处理）
 
             # ---- 普通模式：整份解析 ----
-            res = loader.extract_file(dest)
+            res = loader.extract_file(dest, progress_cb=_cb)
             if not res.text:
                 item["error"] = "未提取到任何文字；" + "；".join(res.warnings or ["请确认文件内容"])
                 item["warnings"] = res.warnings
@@ -816,7 +845,10 @@ def import_resumes(files: list[UploadFile] = File(...), force_llm: str = Form("0
             item["error"] = f"{type(e).__name__}: {e}"
             _remove_orphan(stored)
             results.append(item)
+        with _import_state_lock:
+            _import_state["done"] = sum(1 for x in results if x.get("filename"))
     ok_n = sum(1 for r in results if r["ok"] and "draft" in r)
+    _set_progress(active=False, step="完成", current_file="")
     llm_n = sum(1 for r in results if r.get("llm_used"))
     db.log_event("import_resumes",
                  f"{len(files)} 个文件，成功解析 {ok_n} 份"

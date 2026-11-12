@@ -79,24 +79,56 @@ def main():
     url_local = f"http://127.0.0.1:{port}"
     lan = _lan_ip()
 
-    bar = "─" * 56
+    bar = "─" * 58
     from app import __version__
-    apply_line = ""
+    C = lambda code: f"\033[{code}m"  # noqa: E731
+    R = "\033[0m"
+    BLUE, CYAN, DIM, BOLD, GREEN, YEL = C("38;5;39"), C("38;5;51"), C("2;37"), C("1"), C("38;5;42"), C("38;5;214")
+    apply_url_line = ""
     if cfg.get("apply_enabled", True):
         ap = cfg.get("apply_port", 8301)
-        apply_line = f"\n│  投递门户:  {('http://' + lan + ':' + str(ap)) if host == '0.0.0.0' else 'http://127.0.0.1:' + str(ap)}"
-        apply_line += " " * max(1, 56 - 13 - len(apply_line.split("  ", 1)[-1]) - 1) + "│"
+        au = f"http://{lan}:{ap}" if host == "0.0.0.0" else f"http://127.0.0.1:{ap}"
+        apply_url_line = f"\n│  {DIM}投递门户{R}  {CYAN}{au}{R}" + " " * max(1, 46 - len(au)) + "│"
+    lan_url = f"http://{lan}:{port}" if host == "0.0.0.0" else "（未开放，设置中改 host=0.0.0.0）"
     print(f"""
-┌{bar}┐
-│  TalentHub 企业人才库  v{__version__}                          │
-│  本机访问:  {url_local:<43}│
-│  局域网:    {('http://' + lan + ':' + str(port)) if host == '0.0.0.0' else '（未开放端口，设置中改 host=0.0.0.0）':<43}│{apply_line}
-│  数据目录:  {str(config.DATA_DIR)[:43]:<43}│
-│  按 Ctrl+C 停止服务                                         │
-└{bar}┘
-  © {config.COPYRIGHT['owner']} · {config.COPYRIGHT['author']} 开发
-  {config.COPYRIGHT['notice']}
-  联系: {config.COPYRIGHT["phone"]} / {config.COPYRIGHT["email"]}""", flush=True)
+{BLUE}┌{bar}┐
+│{BOLD}  🎯 TalentHub 企业人才库{R}  {DIM}v{__version__}{R}{" " * max(1, 30 - len(str(__version__)))}│
+│  {DIM}管理端{R}    {CYAN}{url_local}{R}{" " * max(1, 46 - len(url_local))}│
+│  {DIM}局域网{R}    {CYAN}{lan_url[:44]}{R}{" " * max(1, 46 - min(len(lan_url), 44))}│{apply_url_line}
+│  {DIM}数据目录{R}  {str(config.DATA_DIR)[:44]}{" " * max(1, 46 - min(len(str(config.DATA_DIR)), 44))}│
+└{bar}┘{R}
+  {DIM}© {config.COPYRIGHT['owner']} · {config.COPYRIGHT['author']} 开发{R}
+  {DIM}{config.COPYRIGHT['notice']}{R}
+  {DIM}联系: {GREEN}{config.COPYRIGHT['phone']}{R}{DIM} / {GREEN}{config.COPYRIGHT['email']}{R}
+  {DIM}按 Ctrl+C 停止服务{R}""", flush=True)
+    # 组件状态面板（异步打印不阻塞启动；OCR/AI 懒加载，这里只做只读探测）
+    def _status_panel(t_start):
+        import time as _time
+        rows = []
+        try:
+            from app.extract import ocr_engine, llm_parser
+            o = ocr_engine.status()
+            rows.append(("OCR 引擎", "就绪" if o.get("installed") else "未安装", o.get("installed")))
+            l = llm_parser.status()
+            if l.get("mode") == "api":
+                rows.append(("AI 引擎", f"外部 API（{l.get('api_model') or '未配置'}）", l.get("enabled")))
+            else:
+                rows.append(("AI 引擎", f"本地模型（{l.get('model_name') or '未下载'}）", l.get("enabled")))
+            if cfg.get("apply_enabled", True):
+                rows.append(("投递门户", f"端口 {cfg.get('apply_port', 8301)}", True))
+            lock_on = config.LOCK_PATH.exists()
+            rows.append(("锁屏保护", "已开启" if lock_on else "未开启", None))
+        except Exception:
+            pass
+        elapsed = _time.time() - t_start
+        print(f"\n  {DIM}── 组件状态（启动耗时 {elapsed:.1f}s）──────────────{R}")
+        for name, val, good in rows:
+            mark = f"{GREEN}●{R}" if good else (f"{YEL}○{R}" if good is None else f"{C('38;5;203')}○{R}")
+            print(f"  {mark} {DIM}{name:<8}{R} {val}")
+        print(flush=True)
+
+    import time as _t0
+    threading.Thread(target=_status_panel, args=(_t0.time(),), daemon=True).start()
 
     if auto_open:
         def _open():

@@ -918,10 +918,24 @@ async function uploadResumes(files) {
   files.forEach(f => fd.append("files", f));
   fd.append("force_llm", forceLlm ? "1" : "0");
   fd.append("split_scan", splitScan ? "1" : "0");
+  // 进度细化：上传期间轮询后端实时步骤（正在解析第几份/什么操作）
+  const detail = $("#resume-progress-detail");
+  detail.hidden = false;
+  detail.innerHTML = `<span class="pd-spinner"></span><span id="pd-text">上传文件中…</span>`;
+  const pollTimer = setInterval(async () => {
+    try {
+      const p = await fetch("/api/import/progress", { headers: Object.fromEntries(sessionStorage.getItem("th_token") ? [["Authorization", `Bearer ${sessionStorage.getItem("th_token")}`]] : []) }).then(x => x.json());
+      if (!p.active) return;
+      const el = document.getElementById("pd-text");
+      if (el) el.innerHTML = `正在处理 <b>${p.done}/${p.total}</b> 份 · 当前：<b>${esc(p.current_file || "-")}</b> — ${esc(p.step || "")}`;
+    } catch (_) { /* 轮询失败静默 */ }
+  }, 900);
   let r;
   try { r = await api("/api/import/resumes", { method: "POST", body: fd }); }
-  catch (e) { setProgress("#resume-progress", false); toast(e.message, "err", "上传失败"); return; }
+  catch (e) { setProgress("#resume-progress", false); detail.hidden = true; clearInterval(pollTimer); toast(e.message, "err", "上传失败"); return; }
+  clearInterval(pollTimer);
   setProgress("#resume-progress", false);
+  detail.hidden = true;
 
   const okResults = r.results.filter(x => x.ok && x.draft);
   const failResults = r.results.filter(x => !x.ok);
@@ -960,7 +974,7 @@ function renderDrafts() {
       <td><input data-f="expected_title" value="${esc(d.expected_title || d.current_title)}" aria-label="职位"></td>
       <td><select data-f="rating" aria-label="评级"><option value="">—</option>${RATINGS.map(o => `<option ${d.rating === o ? "selected" : ""}>${o}</option>`).join("")}</select></td>
       <td><select data-f="status" aria-label="状态">${STATUSES.map(o => `<option ${(d.status || STATUSES[0]) === o ? "selected" : ""}>${o}</option>`).join("")}</select></td>
-      <td><button class="icon-btn" data-preview="${i}" title="查看解析原文">👁</button></td>
+      <td>${d._ai_trace ? `<button class="btn-trace" data-trace="${i}" title="查看 AI 引擎做了哪些修改">🤖 AI明细</button> ` : ""}<button class="icon-btn" data-preview="${i}" title="查看解析原文">👁</button></td>
     </tr>`).join("");
   $("#draft-zone").scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -971,6 +985,29 @@ $("#draft-tbody").addEventListener("input", e => {
   d[e.target.dataset.f] = e.target.value;
 });
 $("#draft-tbody").addEventListener("click", e => {
+  const tb = e.target.closest("[data-trace]");
+  if (tb) {
+    const i = Number(tb.dataset.trace);
+    const tr = tb.closest("tr");
+    const existing = tr.nextElementSibling;
+    if (existing && existing.classList.contains("ai-trace-row")) { existing.remove(); return; }
+    const t = state.drafts[i]._ai_trace;
+    if (!t) return;
+    const row = document.createElement("tr");
+    row.className = "ai-trace-row";
+    const cols = tr.children.length;
+    row.innerHTML = `<td colspan="${cols}"><div class="ai-trace">
+      <div class="at-head">🤖 AI 工作明细 — ${esc(t.engine)}：${esc(t.model)} · 耗时 ${t.elapsed_s}s · 修改/补充 ${t.changed_fields} 个字段</div>
+      ${(t.changes || []).map(c => `<div class="at-change">
+        <span class="at-field">${esc(c.field)}</span>
+        ${c.before != null ? `<span class="at-before">${esc(String(c.before).slice(0, 40))}</span><span>→</span>` : ""}
+        <span class="at-after">${esc(String(c.after).slice(0, 60))}</span>
+        <span class="at-rule">（${esc(c.rule)}）</span></div>`).join("") || "<div class='at-rule'>AI 认可规则解析结果，未做修改</div>"}
+      <div class="at-explain">💡 ${esc(t.explain || "")}</div>
+    </div></td>`;
+    tr.after(row);
+    return;
+  }
   const btn = e.target.closest("[data-preview]");
   if (!btn) return;
   const d = state.drafts[Number(btn.dataset.preview)];
@@ -1150,7 +1187,7 @@ function verCmp(a, b) {
 }
 async function checkUpdate(manual = false) {
   const box = $("#update-box");
-  if (box) box.innerHTML = "检查中…（连接 GitHub）";
+  if (box) { box.dataset.checked = "1"; box.innerHTML = "检查中…（连接 GitHub）"; }
   let r;
   try { r = await api("/api/update/check"); }
   catch (e) {
@@ -1176,7 +1213,6 @@ async function checkUpdate(manual = false) {
     ${assets}
     <details style="margin-top:8px"><summary class="link" style="cursor:pointer">查看更新说明</summary>
     <div style="white-space:pre-wrap;font-size:12px;margin-top:6px;max-height:220px;overflow-y:auto">${esc(r.notes || "")}</div></details>`;
-  if (!manual) toast(`发现新版本 v${r.latest}，可到「系统设置 → 软件更新」下载（支持加速源）`, "warn", "更新可用");
   return r;
 }
 $("#btn-check-update").addEventListener("click", () => checkUpdate(true));
@@ -1219,7 +1255,8 @@ async function loadSettings() {
     loadLockAudit();
     loadUsage();
     $("#update-current").textContent = `v${sys.version}`;
-    checkUpdate(false);
+    const ub = $("#update-box");
+    if (ub && !ub.dataset.checked) ub.innerHTML = `当前版本 <b>v${esc(sys.version)}</b> · 点右上「立即检查更新」查询新版本（不自动联网，避免拖慢打开速度）`;
     /* AI 面板 */
     await loadAiPanel(cfg, sys);
   } catch (e) { toast(e.message, "err", "设置加载失败"); }
@@ -1555,10 +1592,17 @@ $("#btn-fetch-models").addEventListener("click", async () => {
     const qs = new URLSearchParams({ base, use_saved: key && key !== "******" ? "0" : "1" });
     if (key && key !== "******") qs.set("key", key);
     const r = await api(`/api/llm/api-models?${qs}`);
-    const dl = $("#api-model-list");
-    dl.innerHTML = r.models.map(m => `<option value="${esc(m)}">`).join("");
-    hint.innerHTML = `✓ 获取到 <b>${r.models.length}</b> 个模型：${r.models.slice(0, 8).map(esc).join("、")}${r.models.length > 8 ? " …" : ""}（在「模型名」输入框聚焦可见下拉建议，也可直接手填）`;
-    if (r.models.length && !$("#api-model").value) $("#api-model").value = r.models[0];
+    const listBox = $("#api-models-list");
+    listBox.hidden = false;
+    listBox.innerHTML = `<div class="am-count">共 ${r.models.length} 个模型，点击选择（列表可滚动）：</div>` +
+      r.models.map(m => `<div class="am-item" data-m="${esc(m)}">${esc(m)}</div>`).join("");
+    listBox.querySelectorAll(".am-item").forEach(el => el.addEventListener("click", () => {
+      $("#api-model").value = el.dataset.m;
+      listBox.querySelectorAll(".am-item").forEach(x => x.classList.remove("picked"));
+      el.classList.add("picked");
+      hint.innerHTML = `已选择 <b>${esc(el.dataset.m)}</b>，记得点「保存 AI 设置」生效`;
+    }));
+    hint.innerHTML = `✓ 获取到 <b>${r.models.length}</b> 个模型，点击下方列表选择（也可直接手输）`;
   } catch (e) { hint.textContent = ""; toast(e.message, "err", "拉取模型列表失败"); }
   finally { btn.disabled = false; }
 });
